@@ -9,6 +9,7 @@ import { asyncHandler } from "../errors/errorHandler";
 import { AIDigestController } from "../controllers/AIDigestController";
 import { ChatMessageController } from "../controllers/ChatMessageController";
 import { ChatMessageFtsController } from "../controllers/ChatMessageFtsController";
+import { LatestTopicsController } from "../controllers/LatestTopicsController";
 import { GroupConfigController } from "../controllers/GroupConfigController";
 import { InterestScoreController } from "../controllers/InterestScoreController";
 import { MiscController } from "../controllers/MiscController";
@@ -25,6 +26,7 @@ export const setupApiRoutes = (app: Express): void => {
     const aiDigestController = container.resolve<AIDigestController>(TOKENS.AIDigestController);
     const chatMessageController = container.resolve<ChatMessageController>(TOKENS.ChatMessageController);
     const chatMessageFtsController = container.resolve<ChatMessageFtsController>(TOKENS.ChatMessageFtsController);
+    const latestTopicsController = container.resolve<LatestTopicsController>(TOKENS.LatestTopicsController);
     const groupConfigController = container.resolve<GroupConfigController>(TOKENS.GroupConfigController);
     const interestScoreController = container.resolve<InterestScoreController>(TOKENS.InterestScoreController);
     const miscController = container.resolve<MiscController>(TOKENS.MiscController);
@@ -60,6 +62,12 @@ export const setupApiRoutes = (app: Express): void => {
     app.post(
         "/api/chat-messages-fts-context",
         asyncHandler((req, res) => chatMessageFtsController.getContext(req, res))
+    );
+
+    // 最新话题分页查询
+    app.post(
+        "/api/latest-topics",
+        asyncHandler((req, res) => latestTopicsController.getLatestTopics(req, res))
     );
 
     // 获取会话ID

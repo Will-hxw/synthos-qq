@@ -82,6 +82,24 @@ export const ChatMessageFtsContextSchema = z.object({
 });
 export type ChatMessageFtsContextParams = z.infer<typeof ChatMessageFtsContextSchema>;
 
+export const GetLatestTopicsSchema = z
+    .object({
+        timeStart: UnixMsSchema,
+        timeEnd: UnixMsSchema,
+        page: z.number({ message: "缺少page参数" }).int().positive(),
+        pageSize: z.number({ message: "缺少pageSize参数" }).int().positive().max(100),
+        groupId: z.string().optional(),
+        filterRead: z.boolean().optional().default(true),
+        filterFavorite: z.boolean().optional().default(false),
+        sortByInterest: z.boolean().optional().default(false),
+        search: z.string().max(200).optional().default("")
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
+export type GetLatestTopicsParams = z.infer<typeof GetLatestTopicsSchema>;
+
 // ==================== RAG Search ====================
 
 export const RagSearchSchema = z.object({

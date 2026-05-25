@@ -23,3 +23,25 @@ export interface TopicItem extends AIDigestResult {
     timeEnd: number;
     groupId: string;
 }
+
+export interface LatestTopicsRequest {
+    timeStart: number;
+    timeEnd: number;
+    page: number;
+    pageSize: number;
+    groupId?: string;
+    filterRead: boolean;
+    filterFavorite: boolean;
+    sortByInterest: boolean;
+    search: string;
+}
+
+export interface LatestTopicsResponse {
+    topics: TopicItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+    readStatus: Record<string, boolean>;
+    favoriteStatus: Record<string, boolean>;
+    interestScores: Record<string, number>;
+}

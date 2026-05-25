@@ -152,6 +152,38 @@ Body：
 { sessionId: string; timeStart?: number; timeEnd?: number }[]
 ```
 
+### POST /api/latest-topics
+
+说明：最新话题页专用分页接口。后端会先按时间、群组、搜索、已读、收藏、兴趣排序做全局筛选和排序，再返回当前页数据。
+
+Body：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| timeStart | number | 是 | 起始时间戳（毫秒） |
+| timeEnd | number | 是 | 结束时间戳（毫秒） |
+| page | number | 是 | 页码，从 1 开始 |
+| pageSize | number | 是 | 每页话题数，最大 100 |
+| groupId | string | 否 | 群组 ID；不传表示全部群组 |
+| filterRead | boolean | 否 | 是否只看未读，默认 true |
+| filterFavorite | boolean | 否 | 是否只看收藏，默认 false |
+| sortByInterest | boolean | 否 | 是否按兴趣度全局排序，默认 false |
+| search | string | 否 | 话题、详情、参与者、群组或 session 的搜索文本 |
+
+响应 `data`：
+
+```ts
+{
+  topics: Array<AIDigestResult & { timeStart: number; timeEnd: number; groupId: string }>;
+  total: number;
+  page: number;
+  pageSize: number;
+  readStatus: Record<string, boolean>;
+  favoriteStatus: Record<string, boolean>;
+  interestScores: Record<string, number>;
+}
+```
+
 ### POST /api/message-hourly-stats
 
 Body：

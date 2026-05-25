@@ -4,6 +4,9 @@
  */
 
 import type { ApiResponse } from "@/types/api";
+import type { LatestTopicsRequest, LatestTopicsResponse, TopicItem } from "@/types/topic";
+
+import { mockGetGroupDetails } from "./groupsMock";
 
 // 技术话题模板 - 提供具体的技术内容
 const topicTemplates = [
@@ -617,6 +620,189 @@ export const mockGetTopicsFavoriteStatus = async (topicIds: string[]): Promise<A
     return {
         success: true,
         data: { favoriteStatus },
+        message: ""
+    };
+};
+
+export const mockGetLatestTopics = async (params: LatestTopicsRequest): Promise<ApiResponse<LatestTopicsResponse>> => {
+    const groupsResponse = await mockGetGroupDetails();
+
+    if (!groupsResponse.success) {
+        return {
+            success: false,
+            data: {
+                topics: [],
+                total: 0,
+                page: params.page,
+                pageSize: params.pageSize,
+                readStatus: {},
+                favoriteStatus: {},
+                interestScores: {}
+            },
+            message: groupsResponse.message
+        };
+    }
+
+    const groupIds = params.groupId ? [params.groupId] : Object.keys(groupsResponse.data);
+    const sessionResponse = await mockGetSessionIdsByGroupIdsAndTimeRange(groupIds, params.timeStart, params.timeEnd);
+
+    if (!sessionResponse.success) {
+        return {
+            success: false,
+            data: {
+                topics: [],
+                total: 0,
+                page: params.page,
+                pageSize: params.pageSize,
+                readStatus: {},
+                favoriteStatus: {},
+                interestScores: {}
+            },
+            message: sessionResponse.message
+        };
+    }
+
+    const sessionId2GroupIdMap = new Map(sessionResponse.data.flatMap(({ groupId, sessionIds }) => sessionIds.map(sessionId => [sessionId, groupId])));
+    const sessionIds = Array.from(sessionId2GroupIdMap.keys());
+    const durationResponse = await mockGetSessionTimeDurations(sessionIds);
+    const digestResponse = await mockGetAIDigestResultsBySessionIds(sessionIds);
+
+    if (!durationResponse.success || !digestResponse.success) {
+        return {
+            success: false,
+            data: {
+                topics: [],
+                total: 0,
+                page: params.page,
+                pageSize: params.pageSize,
+                readStatus: {},
+                favoriteStatus: {},
+                interestScores: {}
+            },
+            message: durationResponse.message || digestResponse.message
+        };
+    }
+
+    const sessionId2DurationMap = new Map(durationResponse.data.map(item => [item.sessionId, { timeStart: item.timeStart, timeEnd: item.timeEnd }]));
+    let topics: TopicItem[] = digestResponse.data.flatMap(item =>
+        item.result.map(topic => ({
+            ...topic,
+            timeStart: sessionId2DurationMap.get(item.sessionId)?.timeStart ?? topic.updateTime,
+            timeEnd: sessionId2DurationMap.get(item.sessionId)?.timeEnd ?? topic.updateTime,
+            groupId: sessionId2GroupIdMap.get(item.sessionId) || ""
+        }))
+    );
+
+    const searchText = params.search.trim().toLowerCase();
+
+    if (searchText.length > 0) {
+        topics = topics.filter(topic => {
+            const candidates = [topic.topic, topic.detail, topic.contributors, topic.groupId, topic.sessionId];
+
+            return candidates.some(candidate => candidate.toLowerCase().includes(searchText));
+        });
+    }
+
+    let readStatus: Record<string, boolean> = {};
+    let favoriteStatus: Record<string, boolean> = {};
+
+    if (params.filterRead) {
+        const readResponse = await mockGetTopicsReadStatus(topics.map(topic => topic.topicId));
+
+        readStatus = readResponse.data.readStatus;
+        topics = topics.filter(topic => !readStatus[topic.topicId]);
+    }
+
+    if (params.filterFavorite) {
+        const favoriteResponse = await mockGetTopicsFavoriteStatus(topics.map(topic => topic.topicId));
+
+        favoriteStatus = favoriteResponse.data.favoriteStatus;
+        topics = topics.filter(topic => favoriteStatus[topic.topicId]);
+    }
+
+    const scoreResponse = await mockGetInterestScoreResults(topics.map(topic => topic.topicId));
+    const scoreMap = scoreResponse.data.reduce(
+        (acc, { topicId, score }) => {
+            if (score !== null) {
+                acc[topicId] = score;
+            }
+
+            return acc;
+        },
+        {} as Record<string, number>
+    );
+
+    topics.sort((a, b) => {
+        if (params.sortByInterest) {
+            const scoreA = scoreMap[a.topicId];
+            const scoreB = scoreMap[b.topicId];
+
+            if (scoreA !== undefined && scoreB !== undefined && scoreA !== scoreB) {
+                return scoreB - scoreA;
+            }
+
+            if (scoreA !== undefined && scoreB === undefined) {
+                return -1;
+            }
+
+            if (scoreA === undefined && scoreB !== undefined) {
+                return 1;
+            }
+        }
+
+        return b.timeEnd - a.timeEnd;
+    });
+
+    const total = topics.length;
+    const pageTopics = topics.slice((params.page - 1) * params.pageSize, params.page * params.pageSize);
+    const pageTopicIds = pageTopics.map(topic => topic.topicId);
+
+    if (!params.filterRead) {
+        readStatus = (await mockGetTopicsReadStatus(pageTopicIds)).data.readStatus;
+    } else {
+        readStatus = pageTopicIds.reduce(
+            (acc, topicId) => {
+                acc[topicId] = readStatus[topicId] === true;
+
+                return acc;
+            },
+            {} as Record<string, boolean>
+        );
+    }
+
+    if (!params.filterFavorite) {
+        favoriteStatus = (await mockGetTopicsFavoriteStatus(pageTopicIds)).data.favoriteStatus;
+    } else {
+        favoriteStatus = pageTopicIds.reduce(
+            (acc, topicId) => {
+                acc[topicId] = favoriteStatus[topicId] === true;
+
+                return acc;
+            },
+            {} as Record<string, boolean>
+        );
+    }
+
+    return {
+        success: true,
+        data: {
+            topics: pageTopics,
+            total,
+            page: params.page,
+            pageSize: params.pageSize,
+            readStatus,
+            favoriteStatus,
+            interestScores: pageTopicIds.reduce(
+                (acc, topicId) => {
+                    if (scoreMap[topicId] !== undefined) {
+                        acc[topicId] = scoreMap[topicId];
+                    }
+
+                    return acc;
+                },
+                {} as Record<string, number>
+            )
+        },
         message: ""
     };
 };

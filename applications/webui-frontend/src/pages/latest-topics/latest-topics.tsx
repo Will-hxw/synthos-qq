@@ -1,7 +1,8 @@
 import type { TopicItem } from "@/types/topic";
 import type { GroupDetailsRecord } from "@/types/group";
+import type { ApiResponse } from "@/types/api";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
@@ -13,23 +14,50 @@ import { Check, Search } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 
 import TopicCard from "@/components/topic/TopicCard";
-import { parseContributors } from "@/components/topic/utils";
 import QQAvatar from "@/components/QQAvatar";
-import { getGroupDetails, getSessionIdsByGroupIdsAndTimeRange, getSessionTimeDurations, getAIDigestResultsBySessionIds } from "@/api/basicApi";
-import { getInterestScoreResults } from "@/api/interestScoreApi";
-import { markTopicAsRead, getTopicsReadStatus, markTopicAsFavorite, removeTopicFromFavorites, getTopicsFavoriteStatus } from "@/api/readAndFavApi";
+import { getGroupDetails } from "@/api/basicApi";
+import { getLatestTopics } from "@/api/latestTopicsApi";
+import { markTopicAsRead, markTopicAsFavorite, removeTopicFromFavorites } from "@/api/readAndFavApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
 import ResponsivePopover from "@/components/ResponsivePopover";
-import throttle from "@/util/throttle";
+
+const MIN_UNIX_MS_TIMESTAMP = 0;
+const DEFAULT_TOPICS_PER_PAGE = 3;
+const DEFAULT_START_DATE = new CalendarDate(1970, 1, 1);
+
+const getDefaultEndDate = () => today(getLocalTimeZone()).add({ days: 1 });
+
+const normalizeUnixMsTimestamp = (date: Date): number => Math.max(MIN_UNIX_MS_TIMESTAMP, date.getTime());
+
+const getApiDataOrThrow = <T,>(response: ApiResponse<T>, action: string): T => {
+    if (!response.success) {
+        throw new Error(`${action}失败：${response.message || "接口返回失败"}`);
+    }
+
+    return response.data;
+};
+
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+
+    if (typeof error === "string" && error.length > 0) {
+        return error;
+    }
+
+    return "未知错误";
+};
 
 export default function LatestTopicsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [topics, setTopics] = useState<TopicItem[]>([]);
+    const [totalTopics, setTotalTopics] = useState<number>(0);
     const [loading, setLoading] = useState<boolean>(true);
     const [page, setPage] = useState<number>(1);
-    const [topicsPerPage, setTopicsPerPage] = useState<number>(6); // 将topicsPerPage改为状态
+    const [topicsPerPage, setTopicsPerPage] = useState<number>(DEFAULT_TOPICS_PER_PAGE); // 将topicsPerPage改为状态
     const [readTopics, setReadTopics] = useState<Record<string, boolean>>({});
     const [favoriteTopics, setFavoriteTopics] = useState<Record<string, boolean>>({}); // 收藏状态
     const [interestScores, setInterestScores] = useState<Record<string, number>>({}); // 兴趣得分状态
@@ -46,12 +74,13 @@ export default function LatestTopicsPage() {
 
     // 默认时间范围
     const [dateRange, setDateRange] = useState({
-        start: today(getLocalTimeZone()).subtract({ days: 1 }),
-        end: today(getLocalTimeZone()).add({ days: 1 })
+        start: DEFAULT_START_DATE,
+        end: getDefaultEndDate()
     });
 
     // 标记是否已从URL初始化
     const [isInitializedFromUrl, setIsInitializedFromUrl] = useState<boolean>(false);
+    const requestSeqRef = useRef<number>(0);
 
     // 从URL参数初始化状态
     useEffect(() => {
@@ -70,6 +99,7 @@ export default function LatestTopicsPage() {
                     const urlSortByInterest = searchParams.get("sortByInterest");
                     const urlSearchText = searchParams.get("search");
                     const urlPage = searchParams.get("page");
+                    const urlPageSize = searchParams.get("pageSize");
                     const urlStartDate = searchParams.get("startDate");
                     const urlEndDate = searchParams.get("endDate");
 
@@ -108,6 +138,14 @@ export default function LatestTopicsPage() {
 
                         if (!isNaN(pageNum) && pageNum >= 1) {
                             setPage(pageNum);
+                        }
+                    }
+
+                    if (urlPageSize) {
+                        const pageSizeNum = parseInt(urlPageSize, 10);
+
+                        if ([3, 6, 9, 12].includes(pageSizeNum)) {
+                            setTopicsPerPage(pageSizeNum);
                         }
                     }
 
@@ -169,10 +207,13 @@ export default function LatestTopicsPage() {
             // 只有非第一页才写入URL
             newParams.set("page", String(page));
         }
+        if (topicsPerPage !== DEFAULT_TOPICS_PER_PAGE) {
+            newParams.set("pageSize", String(topicsPerPage));
+        }
 
         // 时间范围：格式化为 YYYY-MM-DD
-        const defaultStart = today(getLocalTimeZone()).subtract({ days: 1 });
-        const defaultEnd = today(getLocalTimeZone()).add({ days: 1 });
+        const defaultStart = DEFAULT_START_DATE;
+        const defaultEnd = getDefaultEndDate();
 
         // 只有当时间范围不是默认值时才写入URL
         const isStartDefault = dateRange.start.year === defaultStart.year && dateRange.start.month === defaultStart.month && dateRange.start.day === defaultStart.day;
@@ -184,182 +225,82 @@ export default function LatestTopicsPage() {
         }
 
         setSearchParams(newParams, { replace: true });
-    }, [selectedGroupId, filterRead, filterFavorite, sortByInterest, searchText, page, dateRange, isInitializedFromUrl, setSearchParams]);
+    }, [selectedGroupId, filterRead, filterFavorite, sortByInterest, searchText, page, topicsPerPage, dateRange, isInitializedFromUrl, setSearchParams]);
 
-    // 加载收藏状态
-    useEffect(() => {
-        const loadFavoriteStatus = async () => {
-            if (topics.length === 0) return;
+    const fetchLatestTopics = async () => {
+        const requestId = requestSeqRef.current + 1;
+        const start = dateRange.start.toDate(getLocalTimeZone());
+        const end = dateRange.end.toDate(getLocalTimeZone());
 
-            try {
-                const topicIds = topics.map(topic => topic.topicId);
-                const status = await getTopicsFavoriteStatus(topicIds);
-
-                setFavoriteTopics(status.data.favoriteStatus);
-            } catch (error) {
-                console.error("Failed to load favorite status:", error);
-            }
-        };
-
-        loadFavoriteStatus();
-    }, [topics]);
-
-    // 初始化已读状态
-    useEffect(() => {
-        const initReadStatus = async () => {
-            if (topics.length === 0) return;
-
-            try {
-                const topicIds = topics.map(topic => topic.topicId);
-                const readStatus = await getTopicsReadStatus(topicIds);
-
-                setReadTopics(readStatus.data.readStatus);
-            } catch (error) {
-                console.error("初始化已读状态失败:", error);
-            }
-        };
-
-        initReadStatus();
-    }, [topics]);
-
-    const fetchLatestTopicsRaw = async (start: Date, end: Date) => {
+        requestSeqRef.current = requestId;
         setLoading(true);
         try {
-            const groupResponse = await getGroupDetails();
+            const [startTime, endTime] = [normalizeUnixMsTimestamp(start), normalizeUnixMsTimestamp(end)];
+            const response = await getLatestTopics({
+                timeStart: startTime,
+                timeEnd: endTime,
+                page,
+                pageSize: topicsPerPage,
+                groupId: selectedGroupId || undefined,
+                filterRead,
+                filterFavorite,
+                sortByInterest,
+                search: searchText
+            });
+            const data = getApiDataOrThrow(response, "获取最新话题");
 
-            if (!groupResponse.success) throw new Error(groupResponse.message);
+            if (requestSeqRef.current !== requestId) {
+                return;
+            }
 
-            const groupIds = Object.keys(groupResponse.data);
-            const [startTime, endTime] = [start.getTime(), end.getTime()];
-            // 获取 sessionId -> groupId 映射
-            const sessionId2GroupIdMap = new Map(
-                (await getSessionIdsByGroupIdsAndTimeRange(groupIds, startTime, endTime)).data.flatMap(({ groupId, sessionIds }) => sessionIds.map(sessionId => [sessionId, groupId]))
-            );
-
-            // 获取会话时间范围
-            const sessionWithDuration = (await getSessionTimeDurations(Array.from(sessionId2GroupIdMap.keys()))).data.map(item => ({
-                ...item,
-                groupId: sessionId2GroupIdMap.get(item.sessionId) || ""
-            }));
-
-            sessionWithDuration.sort((a, b) => b.timeEnd - a.timeEnd); // 按结束时间降序排序
-
-            // 获取话题数据
-            const sessionId2DurationMap = new Map(sessionWithDuration.map(item => [item.sessionId, { timeStart: item.timeStart, timeEnd: item.timeEnd }]));
-            const digestResponse = await getAIDigestResultsBySessionIds(Array.from(new Set(sessionWithDuration.map(item => item.sessionId))));
-            const topicsWithScores = digestResponse.data.flatMap(item =>
-                item.result.map(topic => ({
-                    ...topic,
-                    timeStart: sessionId2DurationMap.get(item.sessionId)!.timeStart,
-                    timeEnd: sessionId2DurationMap.get(item.sessionId)!.timeEnd,
-                    groupId: sessionId2GroupIdMap.get(item.sessionId) || ""
-                }))
-            );
-
-            // 获取兴趣得分
-            const scoreMap = (await getInterestScoreResults(topicsWithScores.map(t => t.topicId))).data.reduce(
-                (acc, { topicId, score }) => {
-                    if (score !== null) acc[topicId] = score;
-
-                    return acc;
-                },
-                {} as Record<string, number>
-            );
-
-            setInterestScores(scoreMap);
-            setTopics(topicsWithScores);
+            setTopics(data.topics);
+            setTotalTopics(data.total);
+            setReadTopics(data.readStatus);
+            setFavoriteTopics(data.favoriteStatus);
+            setInterestScores(data.interestScores);
         } catch (error) {
+            if (requestSeqRef.current !== requestId) {
+                return;
+            }
+
             console.error("获取最新话题失败:", error);
+            Notification.error({
+                title: "获取话题失败",
+                description: `无法加载最新话题：${getErrorMessage(error)}`
+            });
         } finally {
-            setLoading(false);
+            if (requestSeqRef.current === requestId) {
+                setLoading(false);
+            }
         }
     };
 
-    const fetchLatestTopics = throttle(fetchLatestTopicsRaw, 1000);
-
-    // 初始加载 + 日期变化时重新加载（需等待URL初始化完成）
+    // 条件变化时重新加载（需等待URL初始化完成）
     useEffect(() => {
         if (!isInitializedFromUrl) {
             return;
         }
-        const start = dateRange.start.toDate(getLocalTimeZone());
-        const end = dateRange.end.toDate(getLocalTimeZone());
 
-        fetchLatestTopics(start, end);
-    }, [dateRange, isInitializedFromUrl]);
+        const timerId = window.setTimeout(
+            () => {
+                fetchLatestTopics();
+            },
+            searchText ? 300 : 0
+        );
 
-    // 当筛选条件改变时，重置页码
-    useEffect(() => {
-        setPage(1);
-    }, [filterRead, filterFavorite, searchText, selectedGroupId]);
-
-    // 应用筛选器
-    const filteredTopics = topics.filter(topic => {
-        // 群组筛选
-        if (selectedGroupId && topic.groupId !== selectedGroupId) {
-            return false;
-        }
-
-        // 过滤已读
-        if (filterRead && readTopics[topic.topicId]) {
-            return false;
-        }
-
-        // 筛选收藏
-        if (filterFavorite && !favoriteTopics[topic.topicId]) {
-            return false;
-        }
-
-        // 全文搜索
-        if (searchText) {
-            const searchTextLower = searchText.toLowerCase();
-            const topicMatch = topic?.topic?.toLowerCase()?.includes(searchTextLower);
-            const detailMatch = topic?.detail?.toLowerCase()?.includes(searchTextLower);
-            const contributorsArray = parseContributors(topic?.contributors);
-            const contributorMatch = contributorsArray.some(contributor => contributor.toLowerCase().includes(searchTextLower));
-            const groupIdMatch = topic?.groupId?.toLowerCase()?.includes(searchTextLower);
-            const sessionIdMatch = topic?.sessionId?.toLowerCase()?.includes(searchTextLower);
-
-            return topicMatch || detailMatch || contributorMatch || groupIdMatch || sessionIdMatch;
-        }
-
-        return true;
-    });
+        return () => window.clearTimeout(timerId);
+    }, [dateRange, page, topicsPerPage, selectedGroupId, filterRead, filterFavorite, sortByInterest, searchText, isInitializedFromUrl]);
 
     // 分页处理
-    const totalPages = Math.ceil(filteredTopics.length / topicsPerPage);
+    const totalPages = Math.ceil(totalTopics / topicsPerPage);
 
-    // 如果按兴趣度排序，则对filteredTopics进行排序
-    const sortedTopics = useMemo(() => {
-        if (!sortByInterest) {
-            return filteredTopics;
+    useEffect(() => {
+        if (totalPages > 0 && page > totalPages) {
+            setPage(totalPages);
         }
+    }, [page, totalPages]);
 
-        return [...filteredTopics].sort((a, b) => {
-            const scoreA = interestScores[a.topicId];
-            const scoreB = interestScores[b.topicId];
-
-            // 如果两个话题都有兴趣得分，按得分降序排列
-            if (scoreA !== undefined && scoreB !== undefined) {
-                return scoreB - scoreA;
-            }
-
-            // 如果只有A有得分，A排在前面
-            if (scoreA !== undefined && scoreB === undefined) {
-                return -1;
-            }
-
-            // 如果只有B有得分，B排在前面
-            if (scoreA === undefined && scoreB !== undefined) {
-                return 1;
-            }
-
-            // 如果都没有得分，保持原有顺序
-            return 0;
-        });
-    }, [filteredTopics, sortByInterest, interestScores]);
-
-    const currentPageTopics = sortedTopics.slice((page - 1) * topicsPerPage, page * topicsPerPage);
+    const currentPageTopics = topics;
 
     // 标记话题为已读
     const markAsRead = async (topicId: string) => {
@@ -377,6 +318,12 @@ export default function LatestTopicsPage() {
                 title: "标记成功",
                 description: "话题已标记为已读"
             });
+
+            if (filterRead) {
+                setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
+                setTotalTopics(prev => Math.max(0, prev - 1));
+                await fetchLatestTopics();
+            }
         } catch (error) {
             console.error("Failed to mark topic as read:", error);
             // 如果API调用失败，回滚本地状态
@@ -409,6 +356,12 @@ export default function LatestTopicsPage() {
                     title: "取消收藏",
                     description: "话题已从收藏中移除"
                 });
+
+                if (filterFavorite) {
+                    setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
+                    setTotalTopics(prev => Math.max(0, prev - 1));
+                    await fetchLatestTopics();
+                }
             } else {
                 // 添加收藏
                 await markTopicAsFavorite(topicId);
@@ -445,7 +398,7 @@ export default function LatestTopicsPage() {
                 <Card className="mt-0 md:mt-6">
                     <CardHeader className="flex flex-row justify-between items-center pl-7 pr-7 gap-4">
                         <div className="flex flex-row items-center gap-4">
-                            <h2 className="text-xl font-bold min-w-[135px]">话题列表 ({filteredTopics.length})</h2>
+                            <h2 className="text-xl font-bold min-w-[135px]">话题列表 ({totalTopics})</h2>
                             <Input
                                 isClearable
                                 aria-label="全文搜索"
@@ -453,7 +406,10 @@ export default function LatestTopicsPage() {
                                 placeholder="搜索..."
                                 startContent={<Search size={16} />}
                                 value={searchText}
-                                onValueChange={setSearchText}
+                                onValueChange={value => {
+                                    setSearchText(value);
+                                    setPage(1);
+                                }}
                             />
                         </div>
 
@@ -476,6 +432,7 @@ export default function LatestTopicsPage() {
 
                                             setSelectedGroupId(selectedKey || "");
                                         }
+                                        setPage(1);
                                     }}
                                 >
                                     {Object.keys(groups).map(groupId => (
@@ -497,6 +454,7 @@ export default function LatestTopicsPage() {
 
                                             if (selected) {
                                                 setTopicsPerPage(Number(selected));
+                                                setPage(1);
                                             }
                                         }}
                                     >
@@ -507,15 +465,36 @@ export default function LatestTopicsPage() {
                                     </Select>
                                 </div>
 
-                                <Checkbox className="w-110" isSelected={filterRead} onValueChange={setFilterRead}>
+                                <Checkbox
+                                    className="w-110"
+                                    isSelected={filterRead}
+                                    onValueChange={value => {
+                                        setFilterRead(value);
+                                        setPage(1);
+                                    }}
+                                >
                                     只看未读
                                 </Checkbox>
 
-                                <Checkbox className="w-110" isSelected={filterFavorite} onValueChange={setFilterFavorite}>
+                                <Checkbox
+                                    className="w-110"
+                                    isSelected={filterFavorite}
+                                    onValueChange={value => {
+                                        setFilterFavorite(value);
+                                        setPage(1);
+                                    }}
+                                >
                                     只看收藏
                                 </Checkbox>
 
-                                <Checkbox className="w-150" isSelected={sortByInterest} onValueChange={setSortByInterest}>
+                                <Checkbox
+                                    className="w-150"
+                                    isSelected={sortByInterest}
+                                    onValueChange={value => {
+                                        setSortByInterest(value);
+                                        setPage(1);
+                                    }}
+                                >
                                     按兴趣度排序
                                 </Checkbox>
 
@@ -530,6 +509,7 @@ export default function LatestTopicsPage() {
                                                 start: range.start,
                                                 end: range.end
                                             });
+                                            setPage(1);
                                         }
                                     }}
                                 />
@@ -537,10 +517,7 @@ export default function LatestTopicsPage() {
                                     color="primary"
                                     isLoading={loading}
                                     onPress={() => {
-                                        const start = dateRange.start.toDate(getLocalTimeZone());
-                                        const end = dateRange.end.toDate(getLocalTimeZone());
-
-                                        fetchLatestTopics(start, end);
+                                        fetchLatestTopics();
                                     }}
                                 >
                                     刷新
@@ -587,10 +564,7 @@ export default function LatestTopicsPage() {
                                     color="primary"
                                     variant="light"
                                     onPress={() => {
-                                        const start = dateRange.start.toDate(getLocalTimeZone());
-                                        const end = dateRange.end.toDate(getLocalTimeZone());
-
-                                        fetchLatestTopics(start, end);
+                                        fetchLatestTopics();
                                     }}
                                 >
                                     重新加载
@@ -623,6 +597,14 @@ export default function LatestTopicsPage() {
                                                     newReadTopics[topic.topicId] = true;
                                                 });
                                                 setReadTopics(newReadTopics);
+
+                                                if (filterRead) {
+                                                    const unreadTopicIds = new Set(unreadTopics.map(topic => topic.topicId));
+
+                                                    setTopics(prev => prev.filter(topic => !unreadTopicIds.has(topic.topicId)));
+                                                    setTotalTopics(prev => Math.max(0, prev - unreadTopics.length));
+                                                    await fetchLatestTopics();
+                                                }
 
                                                 Notification.success({
                                                     title: "批量标记成功",

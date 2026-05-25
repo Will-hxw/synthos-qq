@@ -11,7 +11,10 @@ export const createIMDBTableSQL = `
                     quotedMsgContent TEXT,
                     sessionId TEXT,
                     preProcessedContent TEXT
-                );`;
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp_sessionId ON chat_messages(timestamp, sessionId);
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_groupId_timestamp_sessionId ON chat_messages(groupId, timestamp, sessionId);
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_sessionId_timestamp ON chat_messages(sessionId, timestamp);`;
 
 export const createAGCTableSQL = `
                 CREATE TABLE IF NOT EXISTS ai_digest_results (
@@ -22,7 +25,8 @@ export const createAGCTableSQL = `
                     detail TEXT,
                     modelName TEXT,
                     updateTime INTEGER
-                );`;
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_results_sessionId ON ai_digest_results(sessionId);`;
 
 export const createInterestScoreTableSQL = `
                 CREATE TABLE IF NOT EXISTS interset_score_results (

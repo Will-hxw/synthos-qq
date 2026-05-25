@@ -10,6 +10,13 @@ import { COMMON_TOKENS } from "../../di/tokens";
 import { CommonDBService } from "./infra/CommonDBService";
 import { createAGCTableSQL } from "./constants/InitialSQL";
 
+export interface LatestTopicRecord extends AIDigestResult {
+    timeStart: number;
+    timeEnd: number;
+    groupId: string;
+    interestScore: number | null;
+}
+
 /**
  * AI 生成内容数据库访问服务
  * 负责 AI 摘要结果的存储和查询
@@ -111,6 +118,62 @@ export class AgcDbAccessService extends Disposable {
         ]);
 
         return results;
+    }
+
+    /**
+     * 获取指定时间范围内命中的话题记录，并附带所属会话完整时间范围、群组和兴趣分。
+     * 时间过滤语义与旧页面链路一致：只要 session 内任一消息落入时间范围，就返回该 session 的全部话题。
+     * @param timeStart 开始时间戳
+     * @param timeEnd 结束时间戳
+     * @param groupId 可选群组 ID
+     */
+    public async getLatestTopicRecordsByTimeRange(
+        timeStart: number,
+        timeEnd: number,
+        groupId?: string
+    ): Promise<LatestTopicRecord[]> {
+        const params: Array<number | string> = [timeStart, timeEnd];
+        let groupFilterSql = "";
+
+        if (groupId) {
+            groupFilterSql = " AND groupId = ?";
+            params.push(groupId);
+        }
+
+        return await this.db.all<LatestTopicRecord>(
+            `WITH matched_sessions AS (
+                SELECT DISTINCT sessionId
+                FROM chat_messages
+                WHERE timestamp BETWEEN ? AND ?
+                  AND sessionId IS NOT NULL${groupFilterSql}
+            ),
+            session_durations AS (
+                SELECT
+                    cm.sessionId AS sessionId,
+                    MIN(cm.timestamp) AS timeStart,
+                    MAX(cm.timestamp) AS timeEnd,
+                    MIN(cm.groupId) AS groupId
+                FROM chat_messages cm
+                INNER JOIN matched_sessions ms ON ms.sessionId = cm.sessionId
+                GROUP BY cm.sessionId
+            )
+            SELECT
+                ar.topicId AS topicId,
+                COALESCE(ar.sessionId, '') AS sessionId,
+                COALESCE(ar.topic, '') AS topic,
+                COALESCE(ar.contributors, '') AS contributors,
+                COALESCE(ar.detail, '') AS detail,
+                COALESCE(ar.modelName, '') AS modelName,
+                COALESCE(ar.updateTime, 0) AS updateTime,
+                sd.timeStart AS timeStart,
+                sd.timeEnd AS timeEnd,
+                COALESCE(sd.groupId, '') AS groupId,
+                isr.scoreV1 AS interestScore
+            FROM ai_digest_results ar
+            INNER JOIN session_durations sd ON sd.sessionId = ar.sessionId
+            LEFT JOIN interset_score_results isr ON isr.topicId = ar.topicId`,
+            params
+        );
     }
 
     /**
