@@ -80,11 +80,18 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
         }
     };
 
+    const handleCardKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+        }
+    };
+
     // 是否正在发送邮件
     const isSendingEmail = sendingEmailReportId === report.reportId;
 
     return (
-        <Card isPressable className="w-full hover:bg-default-100 transition-colors" shadow="sm" onPress={onClick}>
+        <Card className="w-full hover:bg-default-100 transition-colors cursor-pointer" role="button" shadow="sm" tabIndex={0} onClick={onClick} onKeyDown={handleCardKeyDown}>
             <CardBody className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center gap-4">
                     {/* 左侧：类型和时间 */}

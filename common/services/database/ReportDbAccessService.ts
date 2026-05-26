@@ -85,6 +85,26 @@ export class ReportDbAccessService extends Disposable {
     }
 
     /**
+     * 根据报告类型和完整周期精确获取日报。
+     * 若历史数据中同一周期存在多条记录，优先返回成功报告，其次返回最近更新的非成功报告。
+     */
+    public async getReportByTypeAndExactPeriod(
+        type: ReportType,
+        timeStart: number,
+        timeEnd: number
+    ): Promise<Report | null> {
+        const record = await this.db.get<ReportDBRecord>(
+            `SELECT * FROM reports
+            WHERE type = ? AND timeStart = ? AND timeEnd = ?
+            ORDER BY CASE summaryStatus WHEN 'success' THEN 0 ELSE 1 END ASC, updatedAt DESC
+            LIMIT 1`,
+            [type, timeStart, timeEnd]
+        );
+
+        return record ? dbRecordToReport(record) : null;
+    }
+
+    /**
      * 根据类型和时间范围获取日报列表
      */
     public async getReportsByTypeAndTimeRange(

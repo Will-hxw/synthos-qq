@@ -82,4 +82,21 @@ describe("AgcDbAccessService", () => {
         expect(mockCommonDBService.get).not.toHaveBeenCalled();
         expect(mockCommonDBService.all).not.toHaveBeenCalled();
     });
+
+    it("报告话题查询应基于聊天消息时间并返回真实群组", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        await service.getLatestTopicRecordsByTimeRange(100, 200, "group-a");
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM chat_messages");
+        expect(sql).toContain("WHERE timestamp BETWEEN ? AND ?");
+        expect(sql).toContain("MIN(cm.groupId) AS groupId");
+        expect(sql).toContain("LEFT JOIN interset_score_results");
+        expect(sql).not.toContain("ar.updateTime BETWEEN");
+        expect(params).toEqual([100, 200, "group-a"]);
+    });
 });

@@ -5,9 +5,8 @@ import { TaskHandlerTypes, TaskParameters } from "@root/common/scheduler/@types/
 import Logger from "@root/common/util/Logger";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { checkConnectivity } from "@root/common/util/network/checkConnectivity";
-import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
+import { AgcDbAccessService, type LatestTopicRecord } from "@root/common/services/database/AgcDbAccessService";
 import { ReportDbAccessService } from "@root/common/services/database/ReportDbAccessService";
-import { InterestScoreDbAccessService } from "@root/common/services/database/InterestScoreDbAccessService";
 import { Report, ReportStatistics, ReportType } from "@root/common/contracts/report";
 import getRandomHash from "@root/common/util/math/getRandomHash";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
@@ -29,8 +28,6 @@ export class GenerateReportTaskHandler {
         @inject(COMMON_TOKENS.ConfigManagerService) private configManagerService: ConfigManagerService,
         @inject(COMMON_TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService,
         @inject(COMMON_TOKENS.ReportDbAccessService) private reportDbAccessService: ReportDbAccessService,
-        @inject(COMMON_TOKENS.InterestScoreDbAccessService)
-        private interestScoreDbAccessService: InterestScoreDbAccessService,
         @inject(AI_MODEL_TOKENS.ReportEmailService) private reportEmailService: ReportEmailService,
         @inject(AI_MODEL_TOKENS.TextGeneratorService) private textGeneratorService: TextGeneratorService
     ) {}
@@ -63,35 +60,42 @@ export class GenerateReportTaskHandler {
 
                 const { reportType, timeStart, timeEnd } = attrs;
 
-                // 检查是否已存在该时间段的日报
-                if (await this.reportDbAccessService.isReportExists(reportType, timeStart, timeEnd)) {
+                const existingReport = await this.reportDbAccessService.getReportByTypeAndExactPeriod(
+                    reportType,
+                    timeStart,
+                    timeEnd
+                );
+
+                if (existingReport?.summaryStatus === "success") {
                     this.LOGGER.info(
-                        `${reportType} 日报已存在 (${new Date(timeStart).toISOString()} - ${new Date(timeEnd).toISOString()})，跳过`
+                        `${reportType} 日报已成功生成 (${new Date(timeStart).toISOString()} - ${new Date(timeEnd).toISOString()})，跳过重复生成`
                     );
 
                     return;
                 }
+
+                const reportId = existingReport?.reportId ?? getRandomHash(16);
+                const reportCreatedAt = existingReport?.createdAt ?? Date.now();
 
                 const periodDescription = this.formatPeriodDescription(reportType, timeStart, timeEnd);
 
                 this.LOGGER.info(`正在生成 ${periodDescription} 的日报...`);
 
                 try {
-                    // 1. 获取该时间段内的所有 AI 摘要结果
-                    const allDigestResults = await this.agcDbAccessService.selectAll();
-                    const digestResults = allDigestResults.filter(
-                        result => result.updateTime >= timeStart && result.updateTime <= timeEnd
+                    // 1. 按聊天消息时间获取该周期命中的 AI 摘要结果
+                    const digestResults = await this.agcDbAccessService.getLatestTopicRecordsByTimeRange(
+                        timeStart,
+                        timeEnd
                     );
 
                     // 2. 获取兴趣度评分，过滤掉负分话题
-                    const topicIds = digestResults.map(r => r.topicId);
                     const interestScores = new Map<string, number>();
 
-                    for (const topicId of topicIds) {
-                        const score = await this.interestScoreDbAccessService.getInterestScoreResult(topicId);
+                    for (const result of digestResults) {
+                        const score = result.interestScore;
 
-                        if (score !== null) {
-                            interestScores.set(topicId, score);
+                        if (typeof score === "number") {
+                            interestScores.set(result.topicId, score);
                         }
                     }
 
@@ -108,7 +112,7 @@ export class GenerateReportTaskHandler {
                         this.LOGGER.info(`${periodDescription} 没有有效话题，生成空日报`);
 
                         const emptyReport: Report = {
-                            reportId: getRandomHash(16),
+                            reportId,
                             type: reportType,
                             timeStart,
                             timeEnd,
@@ -119,7 +123,7 @@ export class GenerateReportTaskHandler {
                             model: "",
                             statistics: { topicCount: 0, mostActiveGroups: [], mostActiveHour: 0 },
                             topicIds: [],
-                            createdAt: Date.now(),
+                            createdAt: reportCreatedAt,
                             updatedAt: Date.now()
                         };
 
@@ -147,42 +151,21 @@ export class GenerateReportTaskHandler {
                         })
                         .slice(0, topN);
 
-                    // 5. 构建 sessionId -> groupId 映射（用于统计）
-                    const sessionGroupMap = new Map<string, string>();
-                    // 从配置中获取所有群组
-                    const groupIds = Object.keys(config.groupConfigs);
+                    // 5. 计算统计数据
+                    const statistics = this.calculateStatistics(sortedResults);
 
-                    for (const result of sortedResults) {
-                        // TODO 修正这部分逻辑
-                        // 暂时将 sessionId 的前缀作为 groupId（简化实现）
-                        // 实际项目中可能需要从 ImDbAccessService 查询
-                        for (const groupId of groupIds) {
-                            if (result.sessionId.includes(groupId)) {
-                                sessionGroupMap.set(result.sessionId, groupId);
-                                break;
-                            }
-                        }
-                    }
-
-                    // 6. 计算统计数据
-                    const topicsWithGroupId = sortedResults.map(r => ({
-                        ...r,
-                        groupId: sessionGroupMap.get(r.sessionId)
-                    }));
-                    const statistics = this.calculateStatistics(topicsWithGroupId, sessionGroupMap);
-
-                    // 7. 准备话题数据给 LLM
+                    // 6. 准备话题数据给 LLM
                     const topicsData = sortedResults.map(r => ({
                         topic: r.topic,
                         detail: r.detail
                     }));
 
-                    // 8. 检查网络连接
+                    // 7. 检查网络连接
                     if (!(await checkConnectivity())) {
                         this.LOGGER.error("网络连接不可用，跳过 LLM 综述生成");
 
                         const report: Report = {
-                            reportId: getRandomHash(16),
+                            reportId,
                             type: reportType,
                             timeStart,
                             timeEnd,
@@ -193,7 +176,7 @@ export class GenerateReportTaskHandler {
                             model: "",
                             statistics,
                             topicIds: sortedResults.map(r => r.topicId),
-                            createdAt: Date.now(),
+                            createdAt: reportCreatedAt,
                             updatedAt: Date.now()
                         };
 
@@ -202,7 +185,7 @@ export class GenerateReportTaskHandler {
                         return;
                     }
 
-                    // 9. 调用 LLM 生成综述
+                    // 8. 调用 LLM 生成综述
                     const prompt = (
                         await ReportPromptStore.getReportSummaryPrompt(
                             reportType,
@@ -241,9 +224,9 @@ export class GenerateReportTaskHandler {
 
                     this.textGeneratorService.dispose();
 
-                    // 10. 保存日报
+                    // 9. 保存日报
                     const report: Report = {
-                        reportId: getRandomHash(16),
+                        reportId,
                         type: reportType,
                         timeStart,
                         timeEnd,
@@ -254,7 +237,7 @@ export class GenerateReportTaskHandler {
                         model: selectedModelName,
                         statistics,
                         topicIds: sortedResults.map(r => r.topicId),
-                        createdAt: Date.now(),
+                        createdAt: reportCreatedAt,
                         updatedAt: Date.now()
                     };
 
@@ -306,22 +289,12 @@ export class GenerateReportTaskHandler {
     /**
      * 计算统计数据
      */
-    private calculateStatistics(
-        topics: {
-            topicId: string;
-            sessionId: string;
-            topic: string;
-            detail: string;
-            updateTime: number;
-            groupId?: string;
-        }[],
-        sessionGroupMap: Map<string, string>
-    ): ReportStatistics {
+    private calculateStatistics(topics: Pick<LatestTopicRecord, "groupId" | "timeEnd">[]): ReportStatistics {
         // 计算最活跃群组
         const groupTopicCount = new Map<string, number>();
 
         for (const topic of topics) {
-            const groupId = topic.groupId || sessionGroupMap.get(topic.sessionId) || "unknown";
+            const groupId = topic.groupId || "unknown";
 
             groupTopicCount.set(groupId, (groupTopicCount.get(groupId) || 0) + 1);
         }
@@ -335,7 +308,7 @@ export class GenerateReportTaskHandler {
         const hourCount = new Map<number, number>();
 
         for (const topic of topics) {
-            const hour = new Date(topic.updateTime).getHours();
+            const hour = new Date(topic.timeEnd).getHours();
 
             hourCount.set(hour, (hourCount.get(hour) || 0) + 1);
         }
