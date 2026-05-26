@@ -28,12 +28,24 @@ import { DEFAULT_ACTIVE_TAB, DEFAULT_TOP_K, DEFAULT_ENABLE_QUERY_REWRITER, DEFAU
 
 import DefaultLayout from "@/layouts/default";
 
+const isAiChatTab = (value: string | null): value is AiChatTab => value === "ask" || value === "search" || value === "agent";
+
+const getTabFromSearchParams = (params: URLSearchParams): AiChatTab => {
+    const urlTab = params.get("tab");
+
+    if (isAiChatTab(urlTab)) {
+        return urlTab;
+    }
+
+    return DEFAULT_ACTIVE_TAB as AiChatTab;
+};
+
 export default function AiChatPage() {
     const { theme } = useTheme();
     const [searchParams, setSearchParams] = useSearchParams();
 
     // 当前 Tab（ask、search 或 agent）
-    const [activeTab, setActiveTab] = useState<AiChatTab>(DEFAULT_ACTIVE_TAB as AiChatTab);
+    const [activeTab, setActiveTab] = useState<AiChatTab>(() => getTabFromSearchParams(searchParams));
 
     // 问答参数
     const [question, setQuestion] = useState("");
@@ -51,6 +63,7 @@ export default function AiChatPage() {
 
     // 标记是否已从URL初始化
     const [isInitializedFromUrl, setIsInitializedFromUrl] = useState(false);
+    const hasInitializedFromUrlRef = useRef(false);
 
     // 移动端状态
     const { isMobile, mobileDrawerOpen, setMobileDrawerOpen } = useMobileLayout();
@@ -119,11 +132,27 @@ export default function AiChatPage() {
         stopAsk
     });
 
+    const handleTabChange = useCallback(
+        (tab: AiChatTab) => {
+            setActiveTab(tab);
+
+            if (tab !== "agent") {
+                setSelectedAgentConversationId(undefined);
+            }
+        },
+        [setSelectedAgentConversationId]
+    );
+
     // 从URL参数初始化状态
     useEffect(() => {
         const initFromUrl = async () => {
+            if (hasInitializedFromUrlRef.current) {
+                return;
+            }
+            hasInitializedFromUrlRef.current = true;
+
             // 读取URL参数
-            const urlTab = searchParams.get("tab");
+            const urlTab = getTabFromSearchParams(searchParams);
             const urlSessionId = searchParams.get("sessionId");
             const urlConversationId = searchParams.get("conversationId");
             const urlQuestion = searchParams.get("question");
@@ -133,10 +162,7 @@ export default function AiChatPage() {
             const urlSearchLimit = searchParams.get("searchLimit");
             const urlSidebarCollapsed = searchParams.get("sidebarCollapsed");
 
-            // 恢复tab
-            if (urlTab && (urlTab === "ask" || urlTab === "search" || urlTab === "agent")) {
-                setActiveTab(urlTab as AiChatTab);
-            }
+            setActiveTab(urlTab);
 
             // 恢复侧边栏状态
             if (urlSidebarCollapsed !== null) {
@@ -171,7 +197,7 @@ export default function AiChatPage() {
             }
 
             // 恢复Agent对话ID
-            if (urlConversationId) {
+            if (urlTab === "agent" && urlConversationId) {
                 setSelectedAgentConversationId(urlConversationId);
             }
 
@@ -179,14 +205,14 @@ export default function AiChatPage() {
             if (urlSessionId) {
                 setSelectedSessionId(urlSessionId);
                 // 自动加载会话详情
-                await handleSelectSession(urlSessionId);
+                await handleSelectSession(urlSessionId, { shouldSwitchToAsk: false });
             }
 
             setIsInitializedFromUrl(true);
         };
 
         initFromUrl();
-    }, [handleSelectSession]);
+    }, [handleSelectSession, searchParams]);
 
     // 同步状态到URL
     useEffect(() => {
@@ -208,32 +234,32 @@ export default function AiChatPage() {
         }
 
         // conversationId (Agent模式)
-        if (selectedAgentConversationId) {
+        if (activeTab === "agent" && selectedAgentConversationId) {
             newParams.set("conversationId", selectedAgentConversationId);
         }
 
         // question
-        if (question) {
+        if (activeTab === "ask" && question) {
             newParams.set("question", encodeURIComponent(question));
         }
 
         // topK：只有非默认值才写入
-        if (topK !== DEFAULT_TOP_K) {
+        if (activeTab === "ask" && topK !== DEFAULT_TOP_K) {
             newParams.set("topK", String(topK));
         }
 
         // enableQueryRewriter：只有非默认值才写入
-        if (enableQueryRewriter !== DEFAULT_ENABLE_QUERY_REWRITER) {
+        if (activeTab === "ask" && enableQueryRewriter !== DEFAULT_ENABLE_QUERY_REWRITER) {
             newParams.set("enableQueryRewriter", String(enableQueryRewriter));
         }
 
         // searchQuery
-        if (searchQuery) {
+        if (activeTab === "search" && searchQuery) {
             newParams.set("searchQuery", encodeURIComponent(searchQuery));
         }
 
         // searchLimit：只有非默认值才写入
-        if (searchLimit !== DEFAULT_SEARCH_LIMIT) {
+        if (activeTab === "search" && searchLimit !== DEFAULT_SEARCH_LIMIT) {
             newParams.set("searchLimit", String(searchLimit));
         }
 
@@ -309,7 +335,7 @@ export default function AiChatPage() {
                     onNewSession={handleNewSession}
                     onSelectAgentConversation={setSelectedAgentConversationId}
                     onSelectSession={handleSelectSession}
-                    onTabChange={t => setActiveTab(t as AiChatTab)}
+                    onTabChange={t => handleTabChange(t as AiChatTab)}
                 />
 
                 {/* 主内容区 */}

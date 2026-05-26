@@ -24,6 +24,10 @@ interface UseSessionActionsOptions {
     setMobileDrawerOpen: (open: boolean) => void;
 }
 
+interface SelectSessionOptions {
+    shouldSwitchToAsk?: boolean;
+}
+
 /**
  * 会话选择/新建逻辑（包含加载详情与移动端收起）
  */
@@ -46,7 +50,7 @@ export function useSessionActions({
     setMobileDrawerOpen
 }: UseSessionActionsOptions) {
     const handleSelectSession = useCallback(
-        async (sessionId: string | null) => {
+        async (sessionId: string | null, options?: SelectSessionOptions) => {
             setSelectedSessionId(sessionId);
             setSelectedAgentConversationId(undefined);
             stopAsk();
@@ -74,7 +78,7 @@ export function useSessionActions({
                 setTopK(session.topK);
                 setEnableQueryRewriter(session.enableQueryRewriter);
 
-                if (activeTab !== "agent") {
+                if (options?.shouldSwitchToAsk !== false && activeTab !== "agent") {
                     setActiveTab("ask");
                 }
                 if (isMobile) {
