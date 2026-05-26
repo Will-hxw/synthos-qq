@@ -87,8 +87,9 @@ export class TextGeneratorService extends Disposable {
 
             return response.content as string;
         } catch (error) {
-            this.LOGGER.error(`Error generating text with model ${modelName} : ` + error);
-            console.error(error);
+            this.LOGGER.warning(
+                `模型 ${modelName} 单次文本生成失败，错误信息为：${this._formatUnknownError(error)}`
+            );
             throw error;
         }
     }
@@ -136,8 +137,9 @@ export class TextGeneratorService extends Disposable {
 
             return fullContent;
         } catch (error) {
-            this.LOGGER.error(`Error generating text (stream) with model ${modelName}: ${error}`);
-            console.error(error);
+            this.LOGGER.warning(
+                `模型 ${modelName} 单次流式文本生成失败，错误信息为：${this._formatUnknownError(error)}`
+            );
             throw error;
         }
     }
@@ -178,7 +180,9 @@ export class TextGeneratorService extends Disposable {
                     break;
                 }
             } catch (error) {
-                this.LOGGER.warn(`Model ${modelName} stream failed, trying next... Error: ${error}`);
+                this.LOGGER.warning(
+                    `模型 ${modelName} 流式生成失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型`
+                );
                 // 继续尝试下一个模型
             }
         }
@@ -251,7 +255,9 @@ export class TextGeneratorService extends Disposable {
         const rawTrimmedContent = content.trim();
         const trimmedContent = this._stripJsonCodeFence(content);
 
-        return trimmedContent.startsWith("{") || trimmedContent.startsWith("[") || rawTrimmedContent.startsWith("```");
+        return (
+            trimmedContent.startsWith("{") || trimmedContent.startsWith("[") || rawTrimmedContent.startsWith("```")
+        );
     }
 
     /**
@@ -339,7 +345,9 @@ export class TextGeneratorService extends Disposable {
                     throw new Error(`生成的摘要为空`);
                 }
             } catch (error) {
-                this.LOGGER.error(`模型 ${modelName} 生成摘要失败，错误信息为：${error}, 尝试下一个模型`);
+                this.LOGGER.warning(
+                    `模型 ${modelName} 生成摘要失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型`
+                );
                 await sleep(10000); // 等待10秒
                 continue; // 跳过当前模型，尝试下一个
             }

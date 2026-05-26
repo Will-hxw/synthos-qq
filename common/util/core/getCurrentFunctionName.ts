@@ -1,32 +1,107 @@
-// 获取当前函数名的辅助函数
-function getCurrentFunctionNameByDepth(depth: number): string {
+import { basename } from "path";
+
+const IGNORED_FUNCTION_NAMES = new Set([
+    "anonymous",
+    "unknown",
+    "info",
+    "success",
+    "debug",
+    "warning",
+    "warn",
+    "error",
+    "blue",
+    "brightCyan",
+    "green",
+    "yellow",
+    "red",
+    "gray",
+    "bgRed",
+    "bgGreen",
+    "bgYellow",
+    "bgBlue",
+    "gradientWithPastel",
+    "gradientWithAtlas",
+    "gradientWithRainbow",
+    "_getPrefix",
+    "_logWithColor",
+    "_logWithGradient",
+    "getCurrentFunctionName"
+]);
+
+const INTERNAL_FILE_NAMES = new Set([
+    "Logger.ts",
+    "Logger.js",
+    "getCurrentFunctionName.ts",
+    "getCurrentFunctionName.js"
+]);
+
+function getStructuredStack(): NodeJS.CallSite[] {
     const originalPrepareStackTrace = Error.prepareStackTrace;
 
-    Error.prepareStackTrace = (_, stack) => stack;
-    const stack = new Error().stack as unknown as NodeJS.CallSite[];
+    try {
+        Error.prepareStackTrace = (_, stack) => stack;
 
-    Error.prepareStackTrace = originalPrepareStackTrace;
-
-    if (stack && stack.length > depth) {
-        const functionName = stack[depth].getFunctionName();
-
-        if (functionName) {
-            // 提取函数名（去除完整路径）
-            const parts = functionName.split(".");
-
-            return parts[parts.length - 1] || functionName;
-        }
-
-        return "anonymous";
+        return (new Error().stack as unknown as NodeJS.CallSite[]) || [];
+    } finally {
+        Error.prepareStackTrace = originalPrepareStackTrace;
     }
-
-    return "unknown";
 }
 
-export function getCurrentFunctionName() {
-    const candidates = [getCurrentFunctionNameByDepth(5), getCurrentFunctionNameByDepth(6)].filter(item => {
-        return !["anonymous", "unknown", "info", "success", "debug", "warning", "error"].includes(item);
-    });
+function getFrameFileName(frame: NodeJS.CallSite): string {
+    const fileName = frame.getFileName() || frame.getScriptNameOrSourceURL() || "";
 
-    return candidates[0] || "unknown";
+    return basename(fileName);
+}
+
+function isInternalFrame(frame: NodeJS.CallSite): boolean {
+    return INTERNAL_FILE_NAMES.has(getFrameFileName(frame));
+}
+
+function getFunctionNameFromFrame(frame: NodeJS.CallSite): string | null {
+    const functionName = frame.getFunctionName() || frame.getMethodName();
+
+    if (!functionName) {
+        return null;
+    }
+
+    const parts = functionName.split(".");
+    const normalizedFunctionName = parts[parts.length - 1] || functionName;
+
+    if (IGNORED_FUNCTION_NAMES.has(normalizedFunctionName)) {
+        return null;
+    }
+
+    return normalizedFunctionName;
+}
+
+function getFrameLocation(frame: NodeJS.CallSite): string | null {
+    const fileName = getFrameFileName(frame);
+    const lineNumber = frame.getLineNumber();
+
+    if (!fileName) {
+        return null;
+    }
+
+    return lineNumber ? `${fileName}:${lineNumber}` : fileName;
+}
+
+export function getCurrentFunctionName(): string {
+    const stack = getStructuredStack();
+    let fallbackLocation: string | null = null;
+
+    for (const frame of stack) {
+        if (isInternalFrame(frame)) {
+            continue;
+        }
+
+        const functionName = getFunctionNameFromFrame(frame);
+
+        if (functionName) {
+            return functionName;
+        }
+
+        fallbackLocation = fallbackLocation ?? getFrameLocation(frame);
+    }
+
+    return fallbackLocation || "unknown";
 }

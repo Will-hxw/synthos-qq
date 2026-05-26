@@ -4,19 +4,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
 
+const { mockLogger } = vi.hoisted(() => ({
+    mockLogger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+        error: vi.fn(),
+        success: vi.fn()
+    }
+}));
+
 vi.mock("@langchain/openai", () => ({
     ChatOpenAI: class MockChatOpenAI {}
 }));
 
 vi.mock("@root/common/util/Logger", () => ({
     default: {
-        withTag: () => ({
-            debug: vi.fn(),
-            info: vi.fn(),
-            warning: vi.fn(),
-            error: vi.fn(),
-            success: vi.fn()
-        })
+        withTag: () => mockLogger
     }
 }));
 
@@ -76,14 +80,68 @@ describe("TextGeneratorService", () => {
     it("JSON 校验失败后应继续尝试下一个模型候选", async () => {
         const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
 
-        doGenerateTextStream.mockResolvedValueOnce("The request is not valid").mockResolvedValueOnce('{"ok":true}');
+        doGenerateTextStream
+            .mockResolvedValueOnce("The request is not valid")
+            .mockResolvedValueOnce('{"ok":true}');
 
-        const result = await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
 
         expect(result).toEqual({
             selectedModelName: "good-model",
             content: '{"ok":true}'
         });
+    });
+
+    it("候选模型单次失败应记录 warning 而不是 error", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockResolvedValueOnce("").mockResolvedValueOnce('{"ok":true}');
+
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '{"ok":true}'
+        });
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("模型 bad-model 生成摘要失败"));
+        expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it("流式候选模型单次失败应记录 warning 而不是 error", async () => {
+        const doStreamText = vi.spyOn(service as any, "doStreamText") as any;
+        const chunks: string[] = [];
+
+        doStreamText
+            .mockRejectedValueOnce(new Error("bad model"))
+            .mockImplementationOnce(
+                async (_modelName: string, _input: string, onChunk: (chunk: string) => void) => {
+                    onChunk("ok");
+
+                    return "ok";
+                }
+            );
+
+        const result = await service.generateTextStreamWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成内容",
+            chunk => chunks.push(chunk)
+        );
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: "ok"
+        });
+        expect(chunks).toEqual(["ok"]);
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("模型 bad-model 流式生成失败"));
+        expect(mockLogger.error).not.toHaveBeenCalled();
     });
 
     it("JSON 校验失败后应先尝试修复看起来像 JSON 的响应", async () => {
@@ -110,7 +168,11 @@ describe("TextGeneratorService", () => {
             .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 "可以接受""}]')
             .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]');
 
-        const result = await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
 
         expect(result).toEqual({
             selectedModelName: "good-model",
