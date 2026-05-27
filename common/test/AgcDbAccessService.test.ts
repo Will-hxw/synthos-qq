@@ -10,7 +10,8 @@ describe("AgcDbAccessService", () => {
     const mockCommonDBService = {
         init: vi.fn(),
         get: vi.fn(),
-        all: vi.fn()
+        all: vi.fn(),
+        run: vi.fn()
     };
 
     beforeEach(() => {
@@ -19,6 +20,7 @@ describe("AgcDbAccessService", () => {
         mockCommonDBService.init.mockResolvedValue(undefined);
         mockCommonDBService.get.mockResolvedValue({ total: 7 });
         mockCommonDBService.all.mockResolvedValue([]);
+        mockCommonDBService.run.mockResolvedValue(undefined);
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
     });
 
@@ -98,5 +100,73 @@ describe("AgcDbAccessService", () => {
         expect(sql).toContain("LEFT JOIN interset_score_results");
         expect(sql).not.toContain("ar.updateTime BETWEEN");
         expect(params).toEqual([100, 200, "group-a"]);
+    });
+
+    it("应批量查询多个session的摘要结果并按输入顺序分组", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            {
+                topicId: "topic-2",
+                sessionId: "session-2",
+                topic: "话题2",
+                contributors: "[]",
+                detail: "详情2",
+                modelName: "mock",
+                updateTime: 2
+            },
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 1
+            }
+        ]);
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        const result = await service.getAIDigestResultsBySessionIds(["session-1", "session-2", "session-1"]);
+
+        expect(mockCommonDBService.all).toHaveBeenCalledWith(
+            "SELECT * FROM ai_digest_results WHERE sessionId IN (?, ?)",
+            ["session-1", "session-2"]
+        );
+        expect(result.map(item => item.sessionId)).toEqual(["session-1", "session-2", "session-1"]);
+        expect(result[0].result.map(item => item.topicId)).toEqual(["topic-1"]);
+        expect(result[1].result.map(item => item.topicId)).toEqual(["topic-2"]);
+        expect(result[2].result.map(item => item.topicId)).toEqual(["topic-1"]);
+    });
+
+    it("批量存储摘要结果应使用事务", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        await service.storeAIDigestResults([
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 1
+            },
+            {
+                topicId: "topic-2",
+                sessionId: "session-2",
+                topic: "话题2",
+                contributors: "[]",
+                detail: "详情2",
+                modelName: "mock",
+                updateTime: 2
+            }
+        ]);
+
+        expect(mockCommonDBService.run.mock.calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
+        expect(mockCommonDBService.run.mock.calls[mockCommonDBService.run.mock.calls.length - 1][0]).toBe(
+            "COMMIT"
+        );
+        expect(mockCommonDBService.run).toHaveBeenCalledTimes(4);
     });
 });

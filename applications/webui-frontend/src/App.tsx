@@ -1,28 +1,40 @@
+import { lazy, Suspense } from "react";
+
+import { Spinner } from "@heroui/react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
-import LatestTopicsPage from "./pages/latest-topics/latest-topics";
-import ReportsPage from "./pages/reports/reports";
+const LatestTopicsPage = lazy(() => import("./pages/latest-topics/latest-topics"));
+const ReportsPage = lazy(() => import("./pages/reports/reports"));
+const AIDigestPage = lazy(() => import("@/pages/ai-digest"));
+const GroupsPage = lazy(() => import("@/pages/groups"));
+const AiChatPage = lazy(() => import("@/pages/ai-chat/ai-chat"));
+const ConfigPage = lazy(() => import("@/pages/config-panel/config"));
 
-import AIDigestPage from "@/pages/ai-digest";
-import GroupsPage from "@/pages/groups";
-import AiChatPage from "@/pages/ai-chat/ai-chat";
-import ConfigPage from "@/pages/config-panel/config";
+function PageFallback() {
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+            <Spinner label="加载中" size="sm" />
+        </div>
+    );
+}
 
 function App() {
     return (
-        <Routes>
-            <Route element={<Navigate replace to="/latest-topics" />} path="/" />
-            <Route element={<Navigate replace to="/latest-topics" />} path="/chat-messages" />
-            <Route element={<AIDigestPage />} path="/ai-digest" />
-            <Route element={<GroupsPage />} path="/groups" />
-            <Route element={<LatestTopicsPage />} path="/latest-topics" />
-            <Route element={<ReportsPage />} path="/reports" />
-            <Route element={<AiChatPage />} path="/ai-chat" />
-            <Route element={<Navigate replace to="/ai-chat" />} path="/rag" />
-            <Route element={<ConfigPage />} path="/config" />
-            <Route element={<Navigate replace to="/latest-topics" />} path="/system-monitor" />
-            <Route element={<Navigate replace to="/latest-topics" />} path="/system-monitor/logs" />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+            <Routes>
+                <Route element={<Navigate replace to="/latest-topics" />} path="/" />
+                <Route element={<Navigate replace to="/latest-topics" />} path="/chat-messages" />
+                <Route element={<AIDigestPage />} path="/ai-digest" />
+                <Route element={<GroupsPage />} path="/groups" />
+                <Route element={<LatestTopicsPage />} path="/latest-topics" />
+                <Route element={<ReportsPage />} path="/reports" />
+                <Route element={<AiChatPage />} path="/ai-chat" />
+                <Route element={<Navigate replace to="/ai-chat" />} path="/rag" />
+                <Route element={<ConfigPage />} path="/config" />
+                <Route element={<Navigate replace to="/latest-topics" />} path="/system-monitor" />
+                <Route element={<Navigate replace to="/latest-topics" />} path="/system-monitor/logs" />
+            </Routes>
+        </Suspense>
     );
 }
 

@@ -6,7 +6,6 @@ import Logger from "@root/common/util/Logger";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
-import { AIDigestResult } from "@root/common/contracts/ai-model";
 import { InterestScoreDbAccessService } from "@root/common/services/database/InterestScoreDbAccessService";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 
@@ -57,39 +56,27 @@ export class InterestScoreTaskHandler {
                     return;
                 }
 
-                const sessionIds = [] as string[];
+                const groupIds = Object.keys(config.groupConfigs);
+                const sessionIdsByGroup = await this.imDbAccessService.getSessionIdsByGroupIdsAndTimeRange(
+                    groupIds,
+                    attrs.startTimeStamp,
+                    attrs.endTimeStamp
+                );
+                const sessionIds = sessionIdsByGroup.flatMap(item => item.sessionIds);
+                const digestResults = (
+                    await this.agcDbAccessService.getAIDigestResultsBySessionIds(sessionIds)
+                ).flatMap(item => item.result);
 
-                for (const groupId of Object.keys(config.groupConfigs)) {
-                    sessionIds.push(
-                        ...(await this.imDbAccessService.getSessionIdsByGroupIdAndTimeRange(
-                            groupId,
-                            attrs.startTimeStamp,
-                            attrs.endTimeStamp
-                        ))
-                    );
-                }
-
-                const digestResults = [] as AIDigestResult[];
-
-                for (const sessionId of sessionIds) {
-                    digestResults.push(
-                        ...(await this.agcDbAccessService.getAIDigestResultsBySessionId(sessionId))
-                    );
-                }
                 this.LOGGER.info(`共获取到 ${digestResults.length} 可能需要打分的摘要结果`);
 
                 // 过滤掉已经计算过兴趣度的结果
-                const filteredDigestResults = [];
+                const existingTopicIds = await this.interestScoreDbAccessService.getExistingInterestScoreTopicIds(
+                    digestResults.map(digestResult => digestResult.topicId)
+                );
+                const filteredDigestResults = digestResults.filter(
+                    digestResult => !existingTopicIds.has(digestResult.topicId)
+                );
 
-                for (const digestResult of digestResults) {
-                    const exists = await this.interestScoreDbAccessService.isInterestScoreResultExist(
-                        digestResult.topicId
-                    );
-
-                    if (!exists) {
-                        filteredDigestResults.push(digestResult);
-                    }
-                }
                 this.LOGGER.info(`还剩 ${filteredDigestResults.length} 条需要打分的摘要结果`);
                 if (filteredDigestResults.length === 0) {
                     this.LOGGER.info("没有需要打分的摘要结果，跳过当前任务");
@@ -133,12 +120,12 @@ export class InterestScoreTaskHandler {
                 const scores = await rater.scoreTopics(argArr, topics);
 
                 // 存储所有分数结果
-                for (let i = 0; i < filteredDigestResults.length; i++) {
-                    await this.interestScoreDbAccessService.storeInterestScoreResult(
-                        filteredDigestResults[i].topicId,
-                        scores[i]
-                    );
-                }
+                await this.interestScoreDbAccessService.storeInterestScoreResults(
+                    filteredDigestResults.map((digestResult, index) => ({
+                        topicId: digestResult.topicId,
+                        score: scores[index]
+                    }))
+                );
 
                 this.LOGGER.success(`🥳任务完成: ${job.attrs.name}`);
             },

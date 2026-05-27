@@ -25,19 +25,7 @@ export class ChatMessageService {
      * 根据多个群组 ID 和时间范围获取 sessionId 列表
      */
     async getSessionIdsByGroupIdsAndTimeRange(groupIds: string[], timeStart: number, timeEnd: number) {
-        const results = [];
-
-        for (const groupId of groupIds) {
-            const sessionIds = await this.imDbAccessService.getSessionIdsByGroupIdAndTimeRange(
-                groupId,
-                timeStart,
-                timeEnd
-            );
-
-            results.push({ groupId, sessionIds });
-        }
-
-        return results;
+        return await this.imDbAccessService.getSessionIdsByGroupIdsAndTimeRange(groupIds, timeStart, timeEnd);
     }
 
     /**

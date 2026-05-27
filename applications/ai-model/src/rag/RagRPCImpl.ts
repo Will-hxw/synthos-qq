@@ -491,7 +491,10 @@ export class RagRPCImpl implements RAGRPCImplementation {
             temperature?: number;
             maxTokens?: number;
         },
-        onChunk: (chunk: AgentStreamChunk) => void
+        onChunk: (chunk: AgentStreamChunk) => void,
+        options: {
+            abortSignal?: AbortSignal;
+        } = {}
     ): Promise<{
         conversationId: string;
         messageId: string;
@@ -501,6 +504,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
         totalUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
     }> {
         this.LOGGER.info(`收到 Agent 问答请求: "${input.question}"`);
+        this._throwIfAgentAborted(options.abortSignal);
 
         // 1. 确定对话 ID
         let conversationId: string = input.conversationId || randomUUID();
@@ -556,11 +560,14 @@ export class RagRPCImpl implements RAGRPCImplementation {
                 enabledTools: effectiveEnabledTools,
                 maxToolRounds: input.maxToolRounds,
                 temperature: input.temperature,
-                maxTokens: input.maxTokens
+                maxTokens: input.maxTokens,
+                abortSignal: options.abortSignal
             },
             chatHistory,
             systemPrompt
         );
+
+        this._throwIfAgentAborted(options.abortSignal);
 
         // 7. 保存 Assistant 消息
         const assistantMessageId = randomUUID();
@@ -599,6 +606,12 @@ export class RagRPCImpl implements RAGRPCImplementation {
             toolRounds: result.toolRounds,
             totalUsage: result.totalUsage
         };
+    }
+
+    private _throwIfAgentAborted(abortSignal: AbortSignal | undefined): void {
+        if (abortSignal?.aborted) {
+            throw new Error("执行被用户中止");
+        }
     }
 
     /**

@@ -39,6 +39,38 @@ export class InterestScoreDbAccessService extends Disposable {
         );
     }
 
+    /**
+     * 批量存储兴趣评分结果。
+     * @param results 评分结果列表
+     * @param version 分数版本
+     */
+    public async storeInterestScoreResults(
+        results: { topicId: string; score: number }[],
+        version: number = 1
+    ): Promise<void> {
+        if (results.length === 0) {
+            return;
+        }
+
+        await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            for (const result of results) {
+                await this.db.run(
+                    `INSERT INTO interset_score_results (topicId, scoreV${version}) VALUES (?,?)
+                    ON CONFLICT(topicId) DO UPDATE SET
+                        scoreV${version} = excluded.scoreV${version}
+                    `,
+                    [result.topicId, result.score]
+                );
+            }
+
+            await this.db.run("COMMIT");
+        } catch (err) {
+            await this.db.run("ROLLBACK");
+            throw err;
+        }
+    }
+
     // 如果对应的topicid不存在 或者 topicid存在但是没有对应的分数，那么该项目对应的score为null
     public async getInterestScoreResult(topicId: string, version: number = 1): Promise<number | null> {
         const result = await this.db.get<{ score: number | null }>(
@@ -57,6 +89,29 @@ export class InterestScoreDbAccessService extends Disposable {
         );
 
         return result[Object.keys(result)[0]] === 1;
+    }
+
+    /**
+     * 批量读取已经存在指定版本兴趣分的 topicId。
+     * @param topicIds 待检查 topicId
+     * @param version 分数版本
+     * @returns 已存在分数的 topicId 集合
+     */
+    public async getExistingInterestScoreTopicIds(topicIds: string[], version: number = 1): Promise<Set<string>> {
+        if (topicIds.length === 0) {
+            return new Set();
+        }
+
+        const uniqueTopicIds = Array.from(new Set(topicIds));
+        const placeholders = uniqueTopicIds.map(() => "?").join(", ");
+        const rows = await this.db.all<{ topicId: string }>(
+            `SELECT topicId FROM interset_score_results
+             WHERE topicId IN (${placeholders})
+               AND scoreV${version} IS NOT NULL`,
+            uniqueTopicIds
+        );
+
+        return new Set(rows.map(row => row.topicId));
     }
 
     // 获取所有数据，用于数据库迁移、导出、备份等操作

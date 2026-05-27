@@ -6,6 +6,70 @@ import tailwindcss from "@tailwindcss/vite";
 // https://vitejs.dev/config/
 export default defineConfig({
     plugins: [react(), tsconfigPaths(), tailwindcss()],
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    const normalizedId = id.split("\\").join("/");
+
+                    if (!normalizedId.includes("node_modules")) {
+                        return undefined;
+                    }
+
+                    if (normalizedId.includes("monaco-editor") || normalizedId.includes("@monaco-editor")) {
+                        return "vendor-monaco";
+                    }
+
+                    if (normalizedId.includes("zrender")) {
+                        return "vendor-zrender";
+                    }
+
+                    if (normalizedId.includes("echarts")) {
+                        return "vendor-charts";
+                    }
+
+                    if (
+                        normalizedId.includes("react-markdown") ||
+                        normalizedId.includes("remark-gfm") ||
+                        normalizedId.includes("micromark") ||
+                        normalizedId.includes("mdast-util") ||
+                        normalizedId.includes("hast-util") ||
+                        normalizedId.includes("unified")
+                    ) {
+                        return "vendor-markdown";
+                    }
+
+                    if (normalizedId.includes("framer-motion")) {
+                        return "vendor-motion";
+                    }
+
+                    if (normalizedId.includes("/node_modules/@heroui/")) {
+                        const packageName = normalizedId.split("/node_modules/@heroui/")[1].split("/")[0].split("-").join("_");
+
+                        if (packageName === "react") {
+                            return undefined;
+                        }
+
+                        return `vendor-heroui-${packageName}`;
+                    }
+
+                    if (normalizedId.includes("/node_modules/@react-aria/")) {
+                        return "vendor-react-aria";
+                    }
+
+                    if (normalizedId.includes("/node_modules/@react-stately/")) {
+                        return "vendor-react-stately";
+                    }
+
+                    if (normalizedId.includes("react") || normalizedId.includes("react-dom") || normalizedId.includes("react-router-dom")) {
+                        return "vendor-react";
+                    }
+
+                    return undefined;
+                }
+            }
+        }
+    },
     server: {
         host: "127.0.0.1", // 强制使用 IPv4，避免 IPv6 权限问题
         port: 3011, // 避开 Windows Hyper-V 保留端口范围

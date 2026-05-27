@@ -103,7 +103,10 @@ export interface RAGRPCImplementation {
             temperature?: number;
             maxTokens?: number;
         },
-        onChunk: (chunk: any) => void
+        onChunk: (chunk: any) => void,
+        options?: {
+            abortSignal?: AbortSignal;
+        }
     ): Promise<AgentAskOutput>;
 
     /**
@@ -272,29 +275,36 @@ export const createRAGRouter = (impl: RAGRPCImplementation) => {
             return observable<AgentEvent>(emit => {
                 let isStopped = false;
                 let hasDoneEvent = false;
+                const abortController = new AbortController();
 
                 (async () => {
                     try {
-                        const result = await impl.agentAsk(validatedInput, chunk => {
-                            if (isStopped) {
-                                return;
+                        const result = await impl.agentAsk(
+                            validatedInput,
+                            chunk => {
+                                if (isStopped || abortController.signal.aborted) {
+                                    return;
+                                }
+
+                                // runtime 校验（开发期兜底）
+                                try {
+                                    AgentEventSchema.parse(chunk);
+                                } catch {
+                                    // ignore
+                                }
+
+                                emit.next(chunk as AgentEvent);
+
+                                if ((chunk as any)?.type === "done") {
+                                    hasDoneEvent = true;
+                                }
+                            },
+                            {
+                                abortSignal: abortController.signal
                             }
+                        );
 
-                            // runtime 校验（开发期兜底）
-                            try {
-                                AgentEventSchema.parse(chunk);
-                            } catch {
-                                // ignore
-                            }
-
-                            emit.next(chunk as AgentEvent);
-
-                            if ((chunk as any)?.type === "done") {
-                                hasDoneEvent = true;
-                            }
-                        });
-
-                        if (isStopped) {
+                        if (isStopped || abortController.signal.aborted) {
                             return;
                         }
 
@@ -313,7 +323,7 @@ export const createRAGRouter = (impl: RAGRPCImplementation) => {
                         }
                         emit.complete();
                     } catch (err) {
-                        if (isStopped) {
+                        if (isStopped || abortController.signal.aborted) {
                             return;
                         }
                         emit.error(err);
@@ -322,6 +332,7 @@ export const createRAGRouter = (impl: RAGRPCImplementation) => {
 
                 return () => {
                     isStopped = true;
+                    abortController.abort();
                 };
             });
         }),

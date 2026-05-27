@@ -14,6 +14,10 @@ export default async function fetchWrapper(url: string, options?: RequestInit) {
 
         return res;
     } catch (error: any) {
+        if (error?.name === "AbortError") {
+            throw error;
+        }
+
         Notification.error({
             title: "请求失败",
             description: "地址：" + (url || "未知地址") + " 错误：" + (error.message || "未知错误")

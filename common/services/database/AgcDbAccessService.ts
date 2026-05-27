@@ -195,8 +195,39 @@ export class AgcDbAccessService extends Disposable {
      * @param results 摘要结果
      */
     public async storeAIDigestResults(results: AIDigestResult[]) {
-        for (const result of results) {
-            await this.storeAIDigestResult(result);
+        if (results.length === 0) {
+            return;
+        }
+
+        await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            for (const result of results) {
+                await this.db.run(
+                    `INSERT INTO ai_digest_results (topicId, sessionId, topic, contributors, detail, modelName, updateTime) VALUES (?,?,?,?,?,?,?)
+                    ON CONFLICT(topicId) DO UPDATE SET
+                        sessionId = excluded.sessionId,
+                        topic = excluded.topic,
+                        contributors = excluded.contributors,
+                        detail = excluded.detail,
+                        modelName = excluded.modelName,
+                        updateTime = excluded.updateTime
+                    `,
+                    [
+                        result.topicId,
+                        result.sessionId,
+                        result.topic,
+                        result.contributors,
+                        result.detail,
+                        result.modelName,
+                        result.updateTime
+                    ]
+                );
+            }
+
+            await this.db.run("COMMIT");
+        } catch (err) {
+            await this.db.run("ROLLBACK");
+            throw err;
         }
     }
 
@@ -244,6 +275,40 @@ export class AgcDbAccessService extends Disposable {
         ]);
 
         return results;
+    }
+
+    /**
+     * 批量获取多个 session 的摘要结果。
+     * @param sessionIds 会话ID列表
+     * @returns 按输入 sessionId 顺序分组的摘要结果
+     */
+    public async getAIDigestResultsBySessionIds(
+        sessionIds: string[]
+    ): Promise<{ sessionId: string; result: AIDigestResult[] }[]> {
+        if (sessionIds.length === 0) {
+            return [];
+        }
+
+        const uniqueSessionIds = Array.from(new Set(sessionIds));
+        const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+        const rows = await this.db.all<AIDigestResult>(
+            `SELECT * FROM ai_digest_results WHERE sessionId IN (${placeholders})`,
+            uniqueSessionIds
+        );
+        const digestMap = new Map<string, AIDigestResult[]>();
+
+        for (const sessionId of uniqueSessionIds) {
+            digestMap.set(sessionId, []);
+        }
+
+        for (const row of rows) {
+            digestMap.get(row.sessionId)?.push(row);
+        }
+
+        return sessionIds.map(sessionId => ({
+            sessionId,
+            result: digestMap.get(sessionId) || []
+        }));
     }
 
     /**

@@ -75,25 +75,17 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
 
                 try {
                     // 1. 获取指定时间范围内的所有摘要结果
-                    const sessionIds = [] as string[];
+                    const groupIds = Object.keys(config.groupConfigs);
+                    const sessionIdsByGroup = await this.imDbAccessService.getSessionIdsByGroupIdsAndTimeRange(
+                        groupIds,
+                        attrs.startTimeStamp,
+                        attrs.endTimeStamp
+                    );
+                    const sessionIds = sessionIdsByGroup.flatMap(item => item.sessionIds);
+                    const allDigestResults = (
+                        await this.agcDbAccessService.getAIDigestResultsBySessionIds(sessionIds)
+                    ).flatMap(item => item.result);
 
-                    for (const groupId of Object.keys(config.groupConfigs)) {
-                        sessionIds.push(
-                            ...(await this.imDbAccessService.getSessionIdsByGroupIdAndTimeRange(
-                                groupId,
-                                attrs.startTimeStamp,
-                                attrs.endTimeStamp
-                            ))
-                        );
-                    }
-
-                    const allDigestResults = [] as AIDigestResult[];
-
-                    for (const sessionId of sessionIds) {
-                        allDigestResults.push(
-                            ...(await this.agcDbAccessService.getAIDigestResultsBySessionId(sessionId))
-                        );
-                    }
                     this.LOGGER.info(`共获取到 ${allDigestResults.length} 条摘要结果`);
 
                     if (allDigestResults.length === 0) {

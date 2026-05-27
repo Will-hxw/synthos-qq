@@ -614,8 +614,9 @@ export class LangGraphAgentExecutor {
                 {
                     configurable: {
                         thread_id: conversationId
-                    }
-                }
+                    },
+                    signal: config.abortSignal
+                } as any
             )) as AgentGraphState;
 
             const last = resultState.messages.at(-1);

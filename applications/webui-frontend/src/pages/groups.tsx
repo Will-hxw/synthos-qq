@@ -8,11 +8,17 @@ import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import { Tooltip } from "@heroui/react";
 import { TrendingDown, TrendingUp } from "lucide-react";
-import * as echarts from "echarts";
+import type { EChartsType } from "echarts/core";
+import { init, use } from "echarts/core";
+import { LineChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 
 import { getGroupDetails, getMessageHourlyStats } from "@/api/basicApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
+
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 export default function GroupsPage() {
     const [groups, setGroups] = useState<GroupDetailsRecord>({});
@@ -27,9 +33,9 @@ export default function GroupsPage() {
         direction: "descending"
     });
     const totalChartRef = useRef<HTMLDivElement | null>(null);
-    const totalChartInstance = useRef<echarts.EChartsType | null>(null);
+    const totalChartInstance = useRef<EChartsType | null>(null);
     const chartRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const chartInstances = useRef<Record<string, echarts.EChartsType | null>>({});
+    const chartInstances = useRef<Record<string, EChartsType | null>>({});
 
     // 获取小时格式化时间
     const formatHour = (timestamp: number) => {
@@ -83,7 +89,7 @@ export default function GroupsPage() {
             }
 
             // 初始化图表实例
-            const chartInstance = echarts.init(chartRef);
+            const chartInstance = init(chartRef);
 
             chartInstances.current[groupId] = chartInstance;
 
@@ -157,7 +163,7 @@ export default function GroupsPage() {
             }
 
             // 初始化图表实例
-            const chartInstance = echarts.init(chartRef);
+            const chartInstance = init(chartRef);
 
             totalChartInstance.current = chartInstance;
 

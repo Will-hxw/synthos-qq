@@ -192,6 +192,48 @@ export class ImDbAccessService extends Disposable {
     }
 
     /**
+     * 批量获取多个群组在指定时间范围内命中的 sessionId。
+     * @param groupIds 群组ID列表
+     * @param timeStart 起始时间戳
+     * @param timeEnd 结束时间戳
+     * @returns 按输入群组顺序返回的 sessionId 列表
+     */
+    public async getSessionIdsByGroupIdsAndTimeRange(
+        groupIds: string[],
+        timeStart: number,
+        timeEnd: number
+    ): Promise<{ groupId: string; sessionIds: string[] }[]> {
+        if (groupIds.length === 0) {
+            return [];
+        }
+
+        const uniqueGroupIds = Array.from(new Set(groupIds));
+        const placeholders = uniqueGroupIds.map(() => "?").join(", ");
+        const rows = await this.db.all<{ groupId: string; sessionId: string }>(
+            `SELECT DISTINCT groupId, sessionId
+             FROM chat_messages
+             WHERE groupId IN (${placeholders})
+               AND (timestamp BETWEEN ? AND ?)
+               AND sessionId IS NOT NULL`,
+            [...uniqueGroupIds, timeStart, timeEnd]
+        );
+        const sessionMap = new Map<string, string[]>();
+
+        for (const groupId of uniqueGroupIds) {
+            sessionMap.set(groupId, []);
+        }
+
+        for (const row of rows) {
+            sessionMap.get(row.groupId)?.push(row.sessionId);
+        }
+
+        return groupIds.map(groupId => ({
+            groupId,
+            sessionIds: sessionMap.get(groupId) || []
+        }));
+    }
+
+    /**
      * 获取指定会话的开始和结束时间
      * @param sessionId 会话ID
      * @returns 时间戳对象 { timeStart: 开始时间, timeEnd: 结束时间 } 或者 null 如果会话不存在

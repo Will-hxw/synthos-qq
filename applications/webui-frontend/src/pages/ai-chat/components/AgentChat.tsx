@@ -3,8 +3,8 @@
  * 显示 Agent 对话消息、工具调用过程、输入框
  */
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Button, Spinner, Textarea, Card, CardBody, Chip, cn } from "@heroui/react";
-import { Send, Bot, User, Wrench } from "lucide-react";
+import { Button, Spinner, Textarea, Card, CardBody, Chip, Tooltip, cn } from "@heroui/react";
+import { Send, Bot, User, Wrench, Square } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { AgentEvent, AgentMessage, agentAskStream, getAgentMessages } from "@/api/agentApi";
@@ -18,6 +18,14 @@ interface AgentChatProps {
 
     // 当服务端创建/切换对话时通知父组件
     onConversationIdChange?: (conversationId: string | undefined) => void;
+}
+
+function isAbortError(error: unknown): boolean {
+    if (error instanceof DOMException) {
+        return error.name === "AbortError";
+    }
+
+    return typeof error === "object" && error !== null && "name" in error && (error as { name?: string }).name === "AbortError";
 }
 
 /**
@@ -106,6 +114,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
     const [historyHasMore, setHistoryHasMore] = useState(false);
 
     const abortRef = useRef<AbortController | null>(null);
+    const activeRequestIdRef = useRef(0);
+    const pendingAssistantIdRef = useRef<string | null>(null);
 
     type ToolTrace = {
         toolCallId: string;
@@ -134,6 +144,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         setCurrentConversationId(conversationId);
 
         setToolTraces([]);
+        setLoading(false);
+        activeRequestIdRef.current++;
+        pendingAssistantIdRef.current = null;
 
         // 清理正在进行的 SSE
         if (abortRef.current) {
@@ -191,6 +204,38 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         }
     }, [currentConversationId, historyLoading, loading, messages]);
 
+    const handleCancel = useCallback(() => {
+        if (!abortRef.current) {
+            return;
+        }
+
+        const pendingAssistantId = pendingAssistantIdRef.current;
+
+        activeRequestIdRef.current++;
+        abortRef.current.abort();
+        abortRef.current = null;
+        pendingAssistantIdRef.current = null;
+        setLoading(false);
+        setToolTraces([]);
+
+        if (!pendingAssistantId) {
+            return;
+        }
+
+        setMessages(prev =>
+            prev.map(m => {
+                if (m.id !== pendingAssistantId) {
+                    return m;
+                }
+
+                return {
+                    ...m,
+                    content: m.content ? `${m.content}\n\n（已取消）` : "已取消本次回答"
+                };
+            })
+        );
+    }, []);
+
     // 处理发送消息
     const handleSend = useCallback(async () => {
         if (!inputValue.trim() || loading) {
@@ -231,12 +276,20 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
             }
 
             setToolTraces([]);
+            const requestId = activeRequestIdRef.current + 1;
+
+            activeRequestIdRef.current = requestId;
+            pendingAssistantIdRef.current = assistantTempId;
 
             const abortController = new AbortController();
 
             abortRef.current = abortController;
 
             const handleEvent = (evt: AgentEvent) => {
+                if (activeRequestIdRef.current !== requestId || abortController.signal.aborted) {
+                    return;
+                }
+
                 if (evt.type === "token") {
                     setMessages(prev =>
                         prev.map(m => {
@@ -306,6 +359,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                         })
                     );
                     setLoading(false);
+                    abortRef.current = null;
+                    pendingAssistantIdRef.current = null;
 
                     return;
                 }
@@ -340,6 +395,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                     );
 
                     setLoading(false);
+                    abortRef.current = null;
+                    pendingAssistantIdRef.current = null;
                 }
             };
 
@@ -358,6 +415,10 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                     onEvent: handleEvent
                 }
             ).catch(err => {
+                if (activeRequestIdRef.current !== requestId || abortController.signal.aborted || isAbortError(err)) {
+                    return;
+                }
+
                 console.error("Agent SSE 出错:", err);
                 setMessages(prev =>
                     prev.map(m => {
@@ -372,6 +433,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                     })
                 );
                 setLoading(false);
+                abortRef.current = null;
+                pendingAssistantIdRef.current = null;
             });
         } catch (error) {
             console.error("Agent 问答出错:", error);
@@ -389,7 +452,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         } finally {
             // loading 由订阅 done/error 关闭
         }
-    }, [inputValue, loading, currentConversationId, sessionId]);
+    }, [inputValue, loading, currentConversationId, sessionId, onConversationIdChange]);
 
     // 处理键盘事件
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -519,9 +582,17 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                         onChange={e => setInputValue(e.target.value)}
                         onKeyDown={handleKeyDown}
                     />
-                    <Button isIconOnly color="primary" disabled={!inputValue.trim() || loading} size="lg" onPress={handleSend}>
-                        <Send className="w-5 h-5" />
-                    </Button>
+                    {loading ? (
+                        <Tooltip color="danger" content="取消本次回答" placement="top">
+                            <Button isIconOnly aria-label="取消本次回答" color="danger" size="lg" variant="flat" onPress={handleCancel}>
+                                <Square className="w-5 h-5" />
+                            </Button>
+                        </Tooltip>
+                    ) : (
+                        <Button isIconOnly aria-label="发送消息" color="primary" disabled={!inputValue.trim()} size="lg" onPress={handleSend}>
+                            <Send className="w-5 h-5" />
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>

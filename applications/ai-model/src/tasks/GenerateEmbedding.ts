@@ -59,26 +59,19 @@ export class GenerateEmbeddingTaskHandler {
                 }
 
                 // 获取时间范围内的所有 sessionId
-                const sessionIds = [] as string[];
-
-                for (const groupId of Object.keys(config.groupConfigs)) {
-                    sessionIds.push(
-                        ...(await this.imDbAccessService.getSessionIdsByGroupIdAndTimeRange(
-                            groupId,
-                            attrs.startTimeStamp,
-                            attrs.endTimeStamp
-                        ))
-                    );
-                }
+                const groupIds = Object.keys(config.groupConfigs);
+                const sessionIdsByGroup = await this.imDbAccessService.getSessionIdsByGroupIdsAndTimeRange(
+                    groupIds,
+                    attrs.startTimeStamp,
+                    attrs.endTimeStamp
+                );
+                const sessionIds = sessionIdsByGroup.flatMap(item => item.sessionIds);
 
                 // 获取所有 digest 结果
-                const digestResults = [] as AIDigestResult[];
+                const digestResults = (
+                    await this.agcDbAccessService.getAIDigestResultsBySessionIds(sessionIds)
+                ).flatMap(item => item.result);
 
-                for (const sessionId of sessionIds) {
-                    digestResults.push(
-                        ...(await this.agcDbAccessService.getAIDigestResultsBySessionId(sessionId))
-                    );
-                }
                 this.LOGGER.info(`共获取到 ${digestResults.length} 条摘要结果`);
 
                 // 过滤出未生成嵌入的 topicId

@@ -28,16 +28,7 @@ export class AIDigestService {
      * 根据多个 sessionId 获取 AI 摘要结果
      */
     async getAIDigestResultsBySessionIds(sessionIds: string[]) {
-        const results = [];
-
-        for (const sessionId of sessionIds) {
-            results.push({
-                sessionId,
-                result: await this.agcDbAccessService.getAIDigestResultsBySessionId(sessionId)
-            });
-        }
-
-        return results;
+        return await this.agcDbAccessService.getAIDigestResultsBySessionIds(sessionIds);
     }
 
     /**

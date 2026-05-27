@@ -114,35 +114,365 @@ export class QQProvider extends Disposable implements IIMProvider {
                     }
                     break;
                 }
+                case MsgElementType.EMOJI_NEW: {
+                    if (rawMsgElement.emojiText) {
+                        result += `[${rawMsgElement.emojiText}]`;
+                    }
+                    break;
+                }
                 case MsgElementType.IMAGE: {
-                    // TODO: 处理图片消息
                     if (rawMsgElement.imageText) {
-                        result += rawMsgElement.imageText;
+                        result += `[图片文字：${this._normalizeInlineText(rawMsgElement.imageText)}]`;
                     } else {
-                        result += `[图片]`;
+                        result += this._formatImageMessage(rawMsgElement);
                     }
                     break;
                 }
                 case MsgElementType.VOICE: {
-                    // TODO: 处理语音消息
-                    result += `[语音]`;
+                    result += this._formatVoiceMessage(rawMsgElement);
                     break;
                 }
                 case MsgElementType.FILE: {
-                    // TODO: 处理文件消息
-                    result += `[文件][文件名：${rawMsgElement.fileName}]`;
+                    result += this._formatFileMessage(rawMsgElement);
                     break;
                 }
-                // TODO: 处理其他消息类型，比如外链、小程序分享、转发的聊天记录等
+                case MsgElementType.VIDEO: {
+                    result += this._formatVideoMessage(rawMsgElement);
+                    break;
+                }
+                case MsgElementType.REPLY: {
+                    const replyContent = this._normalizeInlineText(rawMsgElement.replyMsgContent);
+
+                    if (replyContent) {
+                        result += `[引用消息：${replyContent}]`;
+                    }
+                    break;
+                }
+                case MsgElementType.SYSTEM_NOTICE: {
+                    result += this._formatSystemNoticeMessage(rawMsgElement);
+                    break;
+                }
+                case MsgElementType.CARD: {
+                    result += this._formatStructuredMessage("卡片消息", rawMsgElement.applicationMessage);
+                    break;
+                }
+                case MsgElementType.XML: {
+                    result += this._formatStructuredMessage("XML消息", rawMsgElement.xmlMessage);
+                    break;
+                }
+                case MsgElementType.CALL: {
+                    result += this._formatCallMessage(rawMsgElement);
+                    break;
+                }
+                case MsgElementType.FEED: {
+                    result += this._formatFeedMessage(rawMsgElement);
+                    break;
+                }
                 default: {
-                    // 忽略其他类型的消息，不加入messages
-                    this.LOGGER.debug(`未知的element类型: ${rawMsgElement.elementType}，忽略该element。`);
+                    const fallback = this._formatUnknownMessage(rawMsgElement);
+
+                    if (fallback) {
+                        result += fallback;
+                    } else {
+                        this.LOGGER.debug(`未知的element类型: ${rawMsgElement.elementType}，忽略该element。`);
+                    }
                     break;
                 }
             }
         }
 
         return result;
+    }
+
+    private _formatImageMessage(element: MsgElement): string {
+        const parts: string[] = [];
+
+        if (element.picType === 2000) {
+            parts.push("GIF");
+        } else if (element.picType === 1000) {
+            parts.push("静态图");
+        }
+
+        if (element.picWidth > 0 && element.picHeight > 0) {
+            parts.push(`尺寸：${element.picWidth}x${element.picHeight}`);
+        }
+
+        const md5 = this._normalizeInlineText(element.originImageMd5);
+
+        if (md5) {
+            parts.push(`MD5：${this._truncateText(md5, 12)}`);
+        }
+
+        if (this._normalizeInlineText(element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow)) {
+            parts.push("含图片链接");
+        }
+
+        if (parts.length === 0) {
+            parts.push("暂无文字描述");
+        }
+
+        return this._buildBracketedMessage("图片", parts);
+    }
+
+    private _formatVoiceMessage(element: MsgElement): string {
+        const pttText = this._normalizeInlineText(element.pttText);
+
+        if (pttText) {
+            return `[语音转文字：${pttText}]`;
+        }
+
+        const parts: string[] = [];
+
+        if (element.duration > 0) {
+            parts.push(`时长：${element.duration}秒`);
+        }
+
+        if (parts.length === 0) {
+            parts.push("暂无转文字");
+        }
+
+        return this._buildBracketedMessage("语音", parts);
+    }
+
+    private _formatFileMessage(element: MsgElement): string {
+        const parts: string[] = [];
+        const fileName = this._normalizeInlineText(element.fileName);
+        const fileSize = this._formatFileSize(element.fileSize);
+
+        if (fileName) {
+            parts.push(`文件名：${fileName}`);
+        }
+
+        if (fileSize) {
+            parts.push(`大小：${fileSize}`);
+        }
+
+        if (!fileName) {
+            const fileUuid = this._normalizeInlineText(element.fileUuid);
+
+            if (fileUuid) {
+                parts.push(`文件ID：${this._truncateText(fileUuid, 16)}`);
+            }
+        }
+
+        if (parts.length === 0) {
+            parts.push("未知文件");
+        }
+
+        return this._buildBracketedMessage("文件", parts);
+    }
+
+    private _formatVideoMessage(element: MsgElement): string {
+        const parts: string[] = [];
+
+        if (element.videotime > 0) {
+            parts.push(`时长：${element.videotime}秒`);
+        }
+
+        if (element.thumbWidth > 0 && element.thumbHeight > 0) {
+            parts.push(`封面尺寸：${element.thumbWidth}x${element.thumbHeight}`);
+        }
+
+        const thumbName = this._normalizeInlineText(element.thumbfilename);
+
+        if (thumbName) {
+            parts.push(`封面：${thumbName}`);
+        }
+
+        if (parts.length === 0) {
+            parts.push("暂无文字描述");
+        }
+
+        return this._buildBracketedMessage("视频", parts);
+    }
+
+    private _formatSystemNoticeMessage(element: MsgElement): string {
+        const parts = [
+            this._normalizeInlineText(element.noticeInfo),
+            this._normalizeInlineText(element.noticeInfo2),
+            this._normalizeInlineText(element.withdrawSuffix)
+        ].filter(Boolean);
+
+        return parts.length > 0 ? this._buildBracketedMessage("系统消息", parts) : "";
+    }
+
+    private _formatCallMessage(element: MsgElement): string {
+        const parts = [
+            this._normalizeInlineText(element.callStatusText),
+            this._normalizeInlineText(element.callText)
+        ].filter(Boolean);
+
+        return parts.length > 0 ? this._buildBracketedMessage("通话消息", parts) : "";
+    }
+
+    private _formatFeedMessage(element: MsgElement): string {
+        const parts = [
+            this._normalizeInlineText(element.feedTitle?.text),
+            this._normalizeInlineText(element.feedContent?.text),
+            this._normalizeInlineText(element.feedUrl)
+        ].filter(Boolean);
+
+        return parts.length > 0 ? this._buildBracketedMessage("动态消息", parts) : "";
+    }
+
+    private _formatStructuredMessage(kind: string, rawContent: string): string {
+        const structuredText = this._extractStructuredText(rawContent);
+
+        if (!structuredText) {
+            return this._buildBracketedMessage(kind, ["暂无可读文本"]);
+        }
+
+        return this._buildBracketedMessage(kind, [structuredText]);
+    }
+
+    private _formatUnknownMessage(element: MsgElement): string {
+        const parts = [
+            this._normalizeInlineText(element.messageText),
+            this._normalizeInlineText(element.applicationMessage),
+            this._normalizeInlineText(element.xmlMessage),
+            this._normalizeInlineText(element.noticeInfo),
+            this._normalizeInlineText(element.feedTitle?.text),
+            this._normalizeInlineText(element.feedContent?.text)
+        ].filter(Boolean);
+
+        return parts.length > 0 ? this._buildBracketedMessage(`未知消息${element.elementType}`, parts) : "";
+    }
+
+    private _extractStructuredText(rawContent: string): string {
+        const normalized = this._normalizeInlineText(rawContent);
+
+        if (!normalized) {
+            return "";
+        }
+
+        try {
+            const parsed = JSON.parse(rawContent);
+            const values: string[] = [];
+
+            this._collectStructuredStrings(parsed, values);
+
+            if (values.length > 0) {
+                return values.slice(0, 6).join("；");
+            }
+        } catch {
+            // 非 JSON 时继续按文本/XML 兜底处理。
+        }
+
+        return this._truncateText(this._stripXmlTags(normalized), 200);
+    }
+
+    private _collectStructuredStrings(value: unknown, values: string[]): void {
+        if (values.length >= 6 || value === null || value === undefined) {
+            return;
+        }
+
+        if (typeof value === "string") {
+            const normalized = this._normalizeInlineText(value);
+
+            if (normalized) {
+                values.push(this._truncateText(normalized, 80));
+            }
+
+            return;
+        }
+
+        if (typeof value !== "object") {
+            return;
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                this._collectStructuredStrings(item, values);
+            }
+
+            return;
+        }
+
+        for (const item of Object.values(value as Record<string, unknown>)) {
+            this._collectStructuredStrings(item, values);
+        }
+    }
+
+    private _stripXmlTags(value: string): string {
+        let result = "";
+        let inTag = false;
+
+        for (const char of value) {
+            if (char === "<") {
+                inTag = true;
+                result += " ";
+                continue;
+            }
+
+            if (char === ">") {
+                inTag = false;
+                result += " ";
+                continue;
+            }
+
+            if (!inTag) {
+                result += char;
+            }
+        }
+
+        return this._normalizeInlineText(result);
+    }
+
+    private _formatFileSize(value: string): string {
+        const bytes = Number(value);
+
+        if (!Number.isFinite(bytes) || bytes <= 0) {
+            return "";
+        }
+
+        if (bytes >= 1024 * 1024) {
+            return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+        }
+
+        if (bytes >= 1024) {
+            return `${(bytes / 1024).toFixed(1)}KB`;
+        }
+
+        return `${bytes}B`;
+    }
+
+    private _buildBracketedMessage(kind: string, parts: string[]): string {
+        const normalizedParts = parts.map(part => this._normalizeInlineText(part)).filter(Boolean);
+
+        return `[${[kind, ...normalizedParts].join("，")}]`;
+    }
+
+    private _normalizeInlineText(value: unknown): string {
+        if (typeof value !== "string") {
+            return "";
+        }
+
+        let result = "";
+        let hasPendingSpace = false;
+
+        for (const char of value.trim()) {
+            if (char === " " || char === "\n" || char === "\r" || char === "\t") {
+                hasPendingSpace = result.length > 0;
+                continue;
+            }
+
+            if (hasPendingSpace) {
+                result += " ";
+                hasPendingSpace = false;
+            }
+
+            result += char;
+        }
+
+        return result.trim();
+    }
+
+    private _truncateText(value: string, maxLength: number): string {
+        if (value.length <= maxLength) {
+            return value;
+        }
+
+        return `${value.slice(0, maxLength)}...`;
     }
 
     /**
@@ -255,7 +585,9 @@ export class QQProvider extends Disposable implements IIMProvider {
                 this.LOGGER.warning(`跳过 ${skippedEmptyQuotedContentCount} 条引用消息内容为空的消息引用。`);
             }
             if (skippedInvalidQuotedProtobufCount > 0) {
-                this.LOGGER.warning(`跳过 ${skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`);
+                this.LOGGER.warning(
+                    `跳过 ${skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`
+                );
             }
             if (skippedInvalidProtobufCount > 0) {
                 this.LOGGER.warning(`跳过 ${skippedInvalidProtobufCount} 条消息正文解析失败的消息。`);

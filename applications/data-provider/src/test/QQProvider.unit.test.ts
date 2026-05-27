@@ -291,7 +291,27 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("[图片]");
+            expect(result[0].messageContent).toBe("[图片，暂无文字描述]");
+        });
+
+        it("图片消息存在识别文本时应进入消息正文", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.IMAGE,
+                        imageText: "图片里的文字"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[图片文字：图片里的文字]");
         });
 
         it("应正确处理语音消息", async () => {
@@ -310,7 +330,28 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("[语音]");
+            expect(result[0].messageContent).toBe("[语音，暂无转文字]");
+        });
+
+        it("语音消息存在转写文本时应进入消息正文", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.VOICE,
+                        pttText: "语音转写内容",
+                        duration: 5
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[语音转文字：语音转写内容]");
         });
 
         it("应正确处理文件消息", async () => {
@@ -330,7 +371,31 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("[文件][文件名：test.pdf]");
+            expect(result[0].messageContent).toBe("[文件，文件名：test.pdf]");
+        });
+
+        it("应从卡片消息中提取可读文本", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: JSON.stringify({
+                            title: "分享标题",
+                            desc: "分享描述",
+                            url: "https://example.com/a"
+                        })
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[卡片消息，分享标题；分享描述；https://example.com/a]");
         });
 
         it("应正确处理混合消息（文本+表情）", async () => {

@@ -9,13 +9,15 @@ import { ImDbAccessService } from "../services/database/ImDbAccessService";
 describe("ImDbAccessService", () => {
     const mockCommonDBService = {
         init: vi.fn(),
-        get: vi.fn()
+        get: vi.fn(),
+        all: vi.fn()
     };
 
     beforeEach(() => {
         container.reset();
         vi.clearAllMocks();
         mockCommonDBService.init.mockResolvedValue(undefined);
+        mockCommonDBService.all.mockResolvedValue([]);
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
     });
 
@@ -30,6 +32,36 @@ describe("ImDbAccessService", () => {
         );
         expect(mockCommonDBService.get).toHaveBeenCalledWith("SELECT * FROM chat_messages WHERE msgId =?", [
             "missing-msg"
+        ]);
+    });
+
+    it("应批量查询多个群组的sessionId并保持输入顺序", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            { groupId: "group-b", sessionId: "session-b" },
+            { groupId: "group-a", sessionId: "session-a-1" },
+            { groupId: "group-a", sessionId: "session-a-2" }
+        ]);
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getSessionIdsByGroupIdsAndTimeRange(
+            ["group-a", "group-b", "group-a"],
+            100,
+            200
+        );
+
+        expect(mockCommonDBService.all).toHaveBeenCalledWith(
+            `SELECT DISTINCT groupId, sessionId
+             FROM chat_messages
+             WHERE groupId IN (?, ?)
+               AND (timestamp BETWEEN ? AND ?)
+               AND sessionId IS NOT NULL`,
+            ["group-a", "group-b", 100, 200]
+        );
+        expect(result).toEqual([
+            { groupId: "group-a", sessionIds: ["session-a-1", "session-a-2"] },
+            { groupId: "group-b", sessionIds: ["session-b"] },
+            { groupId: "group-a", sessionIds: ["session-a-1", "session-a-2"] }
         ]);
     });
 });

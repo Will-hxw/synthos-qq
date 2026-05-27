@@ -82,10 +82,10 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
         getCurrentConfig: vi.fn()
     };
     const mockImDbAccessService = {
-        getSessionIdsByGroupIdAndTimeRange: vi.fn()
+        getSessionIdsByGroupIdsAndTimeRange: vi.fn()
     };
     const mockAgcDbAccessService = {
-        getAIDigestResultsBySessionId: vi.fn()
+        getAIDigestResultsBySessionIds: vi.fn()
     };
     const mockTextGeneratorService = {
         generateTextWithModelCandidates: vi.fn()
@@ -111,16 +111,23 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
                 kvStoreBasePath: "D:/tmp/synthos-kv"
             }
         });
-        mockImDbAccessService.getSessionIdsByGroupIdAndTimeRange.mockResolvedValue(["session-1"]);
-        mockAgcDbAccessService.getAIDigestResultsBySessionId.mockResolvedValue([
+        mockImDbAccessService.getSessionIdsByGroupIdsAndTimeRange.mockResolvedValue([
+            { groupId: "123456", sessionIds: ["session-1"] }
+        ]);
+        mockAgcDbAccessService.getAIDigestResultsBySessionIds.mockResolvedValue([
             {
-                topicId: "topic-1",
                 sessionId: "session-1",
-                topic: "测试话题",
-                detail: "测试详情",
-                contributors: "[]",
-                modelName: "mock-model",
-                updateTime: 1
+                result: [
+                    {
+                        topicId: "topic-1",
+                        sessionId: "session-1",
+                        topic: "测试话题",
+                        detail: "测试详情",
+                        contributors: "[]",
+                        modelName: "mock-model",
+                        updateTime: 1
+                    }
+                ]
             }
         ]);
         mockInterestEmailService.sendInterestTopicsEmail.mockResolvedValue("skipped");
