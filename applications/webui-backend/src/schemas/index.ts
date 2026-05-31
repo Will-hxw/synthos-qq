@@ -40,11 +40,16 @@ export type QueryLogsParams = z.infer<typeof QueryLogsSchema>;
 
 // ==================== Chat Message ====================
 
-export const GetChatMessagesByGroupIdSchema = z.object({
-    groupId: z.string({ message: "缺少必要的参数: groupId" }),
-    timeStart: z.string({ message: "缺少必要的参数: timeStart" }),
-    timeEnd: z.string({ message: "缺少必要的参数: timeEnd" })
-});
+export const GetChatMessagesByGroupIdSchema = z
+    .object({
+        groupId: z.string({ message: "缺少必要的参数: groupId" }),
+        timeStart: UnixMsSchema,
+        timeEnd: UnixMsSchema
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
 export type GetChatMessagesByGroupIdParams = z.infer<typeof GetChatMessagesByGroupIdSchema>;
 
 export const GetSessionIdsByGroupIdsAndTimeRangeSchema = z.object({

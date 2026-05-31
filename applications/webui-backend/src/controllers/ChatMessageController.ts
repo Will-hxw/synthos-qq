@@ -24,8 +24,8 @@ export class ChatMessageController {
         const params = GetChatMessagesByGroupIdSchema.parse(req.query);
         const messages = await this.chatMessageService.getChatMessagesByGroupIdAndTimeRange(
             params.groupId,
-            parseInt(params.timeStart, 10),
-            parseInt(params.timeEnd, 10)
+            params.timeStart,
+            params.timeEnd
         );
 
         res.json({ success: true, data: messages });
