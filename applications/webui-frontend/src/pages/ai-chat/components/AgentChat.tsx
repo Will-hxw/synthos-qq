@@ -35,7 +35,7 @@ interface AgentMessageItemProps {
     message: AgentMessage;
 }
 
-const AgentMessageItem: React.FC<AgentMessageItemProps> = ({ message }) => {
+const AgentMessageItemComponent: React.FC<AgentMessageItemProps> = ({ message }) => {
     const isUser = message.role === "user";
 
     return (
@@ -96,6 +96,17 @@ const AgentMessageItem: React.FC<AgentMessageItemProps> = ({ message }) => {
     );
 };
 
+// 流式 token 高频更新整个 messages 数组，未变化的消息项无需重渲染。
+// 仅当影响渲染的字段变化时才更新，避免每个 token 都重新解析全部 Markdown。
+const AgentMessageItem = React.memo(AgentMessageItemComponent, (prev, next) => {
+    const a = prev.message;
+    const b = next.message;
+
+    return (
+        a.id === b.id && a.content === b.content && a.role === b.role && a.timestamp === b.timestamp && a.toolRounds === b.toolRounds && a.toolsUsed === b.toolsUsed && a.tokenUsage === b.tokenUsage
+    );
+});
+
 /**
  * Agent 聊天主组件
  */
@@ -116,6 +127,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
     const abortRef = useRef<AbortController | null>(null);
     const activeRequestIdRef = useRef(0);
     const pendingAssistantIdRef = useRef<string | null>(null);
+    // 流式 token 批处理：累积到缓冲区，按动画帧合并刷新，避免每个 token 都重解析 Markdown
+    const tokenBufferRef = useRef("");
+    const rafIdRef = useRef<number | null>(null);
 
     type ToolTrace = {
         toolCallId: string;
@@ -129,15 +143,65 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
     const [toolTraces, setToolTraces] = useState<ToolTrace[]>([]);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    // 用户是否贴着底部：贴底才自动跟随，否则用户上滚阅读时不被强行拽回底部
+    const shouldAutoScrollRef = useRef(true);
 
-    // 自动滚动到底部
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
+    // 监听滚动，判断是否仍在底部附近（阈值 80px，容纳行高抖动）
+    const handleScroll = useCallback(() => {
+        const el = scrollContainerRef.current;
+
+        if (!el) {
+            return;
+        }
+
+        const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+
+        shouldAutoScrollRef.current = distanceToBottom < 80;
+    }, []);
+
+    // 自动滚动到底部。流式 token 高频更新时用 instant，避免 smooth 动画排队造成卡顿
+    const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+        if (!shouldAutoScrollRef.current) {
+            return;
+        }
+
+        messagesEndRef.current?.scrollIntoView({ behavior });
+    }, []);
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages]);
+    }, [messages, scrollToBottom]);
+
+    // 把缓冲的 token 一次性合并进待回答的助手消息，并清空缓冲与 RAF 句柄
+    const flushTokenBuffer = useCallback(() => {
+        rafIdRef.current = null;
+
+        const buffered = tokenBufferRef.current;
+
+        if (!buffered) {
+            return;
+        }
+
+        tokenBufferRef.current = "";
+
+        const assistantId = pendingAssistantIdRef.current;
+
+        if (!assistantId) {
+            return;
+        }
+
+        setMessages(prev => prev.map(m => (m.id === assistantId ? { ...m, content: (m.content || "") + buffered } : m)));
+    }, []);
+
+    // 卸载时取消挂起的 RAF，避免回调在已卸载组件上 setState
+    useEffect(() => {
+        return () => {
+            if (rafIdRef.current !== null) {
+                cancelAnimationFrame(rafIdRef.current);
+            }
+        };
+    }, []);
 
     // 切换会话或对话时，加载历史消息（默认拉取最新 20 条）
     useEffect(() => {
@@ -147,6 +211,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         setLoading(false);
         activeRequestIdRef.current++;
         pendingAssistantIdRef.current = null;
+        // 切换对话：丢弃未刷新的缓冲 token 与挂起的 RAF
+        tokenBufferRef.current = "";
+        if (rafIdRef.current !== null) {
+            cancelAnimationFrame(rafIdRef.current);
+            rafIdRef.current = null;
+        }
 
         // 清理正在进行的 SSE
         if (abortRef.current) {
@@ -215,6 +285,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         abortRef.current.abort();
         abortRef.current = null;
         pendingAssistantIdRef.current = null;
+        // 丢弃未刷新的缓冲 token，避免取消后又追加残留内容
+        tokenBufferRef.current = "";
+        if (rafIdRef.current !== null) {
+            cancelAnimationFrame(rafIdRef.current);
+            rafIdRef.current = null;
+        }
         setLoading(false);
         setToolTraces([]);
 
@@ -267,6 +343,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         };
 
         setMessages(prev => [...prev, userMessage, assistantTempMessage]);
+        // 用户主动发送：强制贴底跟随本轮回答
+        shouldAutoScrollRef.current = true;
 
         try {
             // 清理之前的 SSE
@@ -291,18 +369,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                 }
 
                 if (evt.type === "token") {
-                    setMessages(prev =>
-                        prev.map(m => {
-                            if (m.id !== assistantTempId) {
-                                return m;
-                            }
+                    // 累积到缓冲区，按帧合并刷新，降低 Markdown 重解析频率
+                    tokenBufferRef.current += evt.content;
 
-                            return {
-                                ...m,
-                                content: (m.content || "") + evt.content
-                            };
-                        })
-                    );
+                    if (rafIdRef.current === null) {
+                        rafIdRef.current = requestAnimationFrame(flushTokenBuffer);
+                    }
 
                     return;
                 }
@@ -346,6 +418,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                 }
 
                 if (evt.type === "error") {
+                    // 丢弃未刷新的缓冲，避免错误文案后又追加残留 token
+                    tokenBufferRef.current = "";
+                    if (rafIdRef.current !== null) {
+                        cancelAnimationFrame(rafIdRef.current);
+                        rafIdRef.current = null;
+                    }
                     setMessages(prev =>
                         prev.map(m => {
                             if (m.id !== assistantTempId) {
@@ -366,6 +444,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                 }
 
                 if (evt.type === "done") {
+                    // 先把尚未刷新的缓冲 token 合并进消息，再以最终内容定稿
+                    flushTokenBuffer();
                     setCurrentConversationId(evt.conversationId);
                     onConversationIdChange?.(evt.conversationId);
 
@@ -452,7 +532,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         } finally {
             // loading 由订阅 done/error 关闭
         }
-    }, [inputValue, loading, currentConversationId, sessionId, onConversationIdChange]);
+    }, [inputValue, loading, currentConversationId, sessionId, onConversationIdChange, flushTokenBuffer]);
 
     // 处理键盘事件
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -465,7 +545,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
     return (
         <div className="flex flex-col h-full">
             {/* 消息列表 */}
-            <div className="flex-1 overflow-y-auto px-4 py-6">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-6" onScroll={handleScroll}>
                 {/* 历史分页 */}
                 {currentConversationId && messages.length > 0 && historyHasMore && (
                     <div className="flex justify-center mb-4">
