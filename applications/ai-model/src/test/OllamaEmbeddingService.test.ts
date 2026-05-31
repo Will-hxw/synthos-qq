@@ -132,6 +132,32 @@ describe("EmbeddingService", () => {
             );
         });
 
+        it("should throw error if returned embedding count mismatch", async () => {
+            // 输入 3 条文本但 Ollama 只返回 2 条向量，必须快速失败以免下游分数错位
+            const mockEmbeddings = [Array(TEST_DIMENSION).fill(0.1), Array(TEST_DIMENSION).fill(0.2)];
+
+            mockAxiosInstance.post.mockResolvedValueOnce({
+                data: {
+                    model: TEST_MODEL,
+                    embeddings: mockEmbeddings
+                }
+            });
+
+            await expect(service.embedBatch(["文本1", "文本2", "文本3"])).rejects.toThrow(
+                "嵌入向量条数不匹配：期望 3，实际 2"
+            );
+        });
+
+        it("should throw error if embeddings field is missing", async () => {
+            mockAxiosInstance.post.mockResolvedValueOnce({
+                data: {
+                    model: TEST_MODEL
+                }
+            });
+
+            await expect(service.embedBatch(["文本1"])).rejects.toThrow("嵌入向量条数不匹配：期望 1，实际 0");
+        });
+
         it("should throw error on API failure", async () => {
             const axiosError = new Error("Network Error");
 

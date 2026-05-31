@@ -66,6 +66,14 @@ export class EmbeddingService {
 
             const embeddings = response.data.embeddings;
 
+            // 校验返回向量条数与输入文本条数一致：Ollama 少返回一条会导致下游按索引对齐时
+            // 分数与话题错位、写入 undefined/NaN 分数，必须在使用前快速失败
+            if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
+                throw new Error(
+                    `嵌入向量条数不匹配：期望 ${texts.length}，实际 ${Array.isArray(embeddings) ? embeddings.length : 0}`
+                );
+            }
+
             // 校验向量维度
             for (let i = 0; i < embeddings.length; i++) {
                 if (embeddings[i].length !== this.dimension) {
