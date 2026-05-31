@@ -35,6 +35,7 @@ import { RAGCtxBuilder } from "../context/ctxBuilders/RAGCtxBuilder";
 import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
 import { EmbeddingService } from "../services/embedding/EmbeddingService";
 import { VectorDBManagerService } from "../services/embedding/VectorDBManagerService";
+import { l2DistanceToRelevance } from "../services/embedding/vectorRelevance";
 import { AgentPromptStore } from "../context/prompts/AgentPromptStore";
 import { LangGraphAgentExecutor } from "../agent-langgraph/LangGraphAgentExecutor";
 import { AgentToolCatalog } from "../agent-langgraph/AgentToolCatalog";
@@ -190,7 +191,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
         const references = topResults.map(r => ({
             topicId: r.topicId,
             topic: r.topic,
-            relevance: Math.max(0, 1 - (r.distance ?? 1)) // 距离转相关性，确保非负
+            relevance: l2DistanceToRelevance(r.distance) // L2 距离转相关性
         }));
 
         return {
@@ -257,7 +258,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
             const references = topResults.map(r => ({
                 topicId: r.topicId,
                 topic: r.topic,
-                relevance: Math.max(0, 1 - (r.distance ?? 1))
+                relevance: l2DistanceToRelevance(r.distance)
             }));
 
             onChunk({ type: "references", references });

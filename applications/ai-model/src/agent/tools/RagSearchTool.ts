@@ -10,6 +10,7 @@ import Logger from "@root/common/util/Logger";
 import { ToolDefinition, ToolExecutor } from "../contracts/tools";
 import { VectorDBManagerService } from "../../services/embedding/VectorDBManagerService";
 import { EmbeddingService } from "../../services/embedding/EmbeddingService";
+import { l2DistanceToRelevance } from "../../services/embedding/vectorRelevance";
 import { AI_MODEL_TOKENS } from "../../di/tokens";
 import { EmbeddingPromptStore } from "../../context/prompts/EmbeddingPromptStore";
 
@@ -96,7 +97,7 @@ export class RagSearchTool {
                             topic: digest.topic,
                             detail: digest.detail,
                             contributors: digest.contributors,
-                            relevanceScore: (1 - result.distance).toFixed(4)
+                            relevanceScore: l2DistanceToRelevance(result.distance).toFixed(4)
                         });
                     }
                 }
