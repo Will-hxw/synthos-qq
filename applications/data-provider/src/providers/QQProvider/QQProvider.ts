@@ -5,7 +5,7 @@ import { RawChatMessage } from "@root/common/contracts/data-provider/index";
 import Logger from "@root/common/util/Logger";
 import { PromisifiedSQLite } from "@root/common/util/promisify/PromisifiedSQLite";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
-import { ASSERT, ASSERT_NOT_FATAL } from "@root/common/util/ASSERT";
+import { ASSERT } from "@root/common/util/ASSERT";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
 import sqlite3 from "@journeyapps/sqlcipher";
@@ -594,69 +594,6 @@ export class QQProvider extends Disposable implements IIMProvider {
             }
 
             return messages;
-        } else {
-            throw ErrorReasons.UNINITIALIZED_ERROR;
-        }
-    }
-
-    /**
-     * 根据会话群号（40027）和消息序号（40003）获取消息
-     * @returns 消息数组
-     */
-    private async _getMsgIdByGroupNumberAndMsgSeq(
-        groupNumber: number,
-        msgSeq: number
-    ): Promise<string | undefined> {
-        if (this.db) {
-            const sql = `SELECT CAST("${GMC.msgId}" AS TEXT) AS "${GMC.msgId}",
-                            "${GMC.msgContent}"
-                         FROM group_msg_table 
-                         WHERE ${await this._getPatchSQL()} 
-                         AND "${GMC.msgSeq}" = ${msgSeq}
-                         AND "${GMC.peeruin}" = ${groupNumber}`;
-
-            this.LOGGER.debug(`执行的SQL: ${sql}`);
-            const results = await this.db.all(sql);
-
-            this.LOGGER.debug(`结果数量: ${results.length}`);
-            ASSERT_NOT_FATAL(
-                results.length <= 1,
-                `查询到多条消息，msgSeq: ${msgSeq}, groupNumber: ${groupNumber}，
-                查询结果数: ${results.length}, results: ${JSON.stringify(results)}`
-            );
-            if (results.length === 0) {
-                return undefined;
-            } else {
-                return results[0][GMC.msgId];
-            }
-        } else {
-            throw ErrorReasons.UNINITIALIZED_ERROR;
-        }
-    }
-
-    /**
-     * 根据消息ID（40001）获取消息
-     * @param msgId 消息ID (由于id过长，超过Math.MAX_SAFE_INTEGER，因此使用字符串)
-     * @returns 消息数组
-     */
-    private async _getMsgByMsgId(msgId: string): Promise<RawGroupMsgFromDB | null> {
-        if (this.db) {
-            // 生成SQL语句
-            const sql = `SELECT * FROM group_msg_table WHERE ${await this._getPatchSQL()} and "${GMC.msgId}" = ${msgId}`;
-
-            this.LOGGER.debug(`执行的SQL: ${sql}`);
-            const results = await this.db.all(sql);
-
-            this.LOGGER.debug(`结果数量: ${results.length}`);
-            ASSERT(
-                results.length <= 1,
-                `查询到多条消息，查询结果数: ${results.length}, msgId: ${msgId}, results: ${JSON.stringify(results)}`
-            );
-            if (results.length === 0) {
-                return null;
-            }
-
-            return results[0];
         } else {
             throw ErrorReasons.UNINITIALIZED_ERROR;
         }
