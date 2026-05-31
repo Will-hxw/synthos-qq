@@ -346,6 +346,7 @@ export class ImDbAccessService extends Disposable {
              FROM chat_messages cm
              LEFT JOIN ai_digest_results ar ON ar.sessionId = cm.sessionId
              WHERE cm.groupId = ? AND cm.sessionId IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM ai_digest_sessions ds WHERE ds.sessionId = cm.sessionId)
              GROUP BY cm.sessionId
              HAVING COUNT(ar.topicId) = 0
              ORDER BY timeEnd ASC

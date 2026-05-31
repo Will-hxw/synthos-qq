@@ -64,4 +64,20 @@ describe("ImDbAccessService", () => {
             { groupId: "group-a", sessionIds: ["session-a-1", "session-a-2"] }
         ]);
     });
+
+    it("回填未摘要 session 应排除已写入终态的 session", async () => {
+        const service = new ImDbAccessService();
+
+        await service.init();
+        await service.getUnsummarizedSessionStatsByGroupId("group-a", 10);
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain(
+            "NOT EXISTS (SELECT 1 FROM ai_digest_sessions ds WHERE ds.sessionId = cm.sessionId)"
+        );
+        expect(sql).toContain("HAVING COUNT(ar.topicId) = 0");
+        expect(params).toEqual(["group-a", 10]);
+    });
 });

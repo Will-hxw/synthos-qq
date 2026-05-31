@@ -216,4 +216,140 @@ describe("AgcDbAccessService", () => {
         );
         expect(mockCommonDBService.run).toHaveBeenCalledTimes(4);
     });
+
+    it("非兴趣排序应按 timeEnd 与 updateTime 降序", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        await service.getLatestTopicRecordsPageByTimeRange({
+            timeStart: 100,
+            timeEnd: 200,
+            page: 1,
+            pageSize: 10,
+            sortByInterest: false
+        });
+
+        const pageSql = mockCommonDBService.all.mock.calls[0][0] as string;
+
+        expect(pageSql).toContain("ORDER BY timeEnd DESC, updateTime DESC, topicId ASC");
+    });
+
+    it("commitSessionDigest 应在单事务内替换话题并写入 success 终态", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        await service.commitSessionDigest("session-1", [
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 1
+            }
+        ]);
+
+        const calls = mockCommonDBService.run.mock.calls;
+
+        expect(calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
+        expect(calls[1][0]).toContain("DELETE FROM ai_digest_results WHERE sessionId = ?");
+        expect(calls[1][1]).toEqual(["session-1"]);
+        expect(calls[2][0]).toContain("INSERT INTO ai_digest_results");
+        expect(calls[3][0]).toContain("INSERT INTO ai_digest_sessions");
+        expect(calls[3][1]).toEqual(["session-1", "success", 1, expect.any(Number)]);
+        expect(calls[4][0]).toBe("COMMIT");
+    });
+
+    it("commitSessionDigest 对 sessionId 不一致的结果应抛错且不写库", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+
+        await expect(
+            service.commitSessionDigest("session-1", [
+                {
+                    topicId: "topic-x",
+                    sessionId: "session-2",
+                    topic: "话题x",
+                    contributors: "[]",
+                    detail: "详情x",
+                    modelName: "mock",
+                    updateTime: 1
+                }
+            ])
+        ).rejects.toThrow("session-1");
+        expect(mockCommonDBService.run).not.toHaveBeenCalled();
+    });
+
+    it("markSessionEmpty 应清除旧话题并写入 empty 终态", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        await service.markSessionEmpty("session-empty");
+
+        const calls = mockCommonDBService.run.mock.calls;
+
+        expect(calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
+        expect(calls[1][0]).toContain("DELETE FROM ai_digest_results WHERE sessionId = ?");
+        expect(calls[2][0]).toContain("INSERT INTO ai_digest_sessions");
+        expect(calls[2][1]).toEqual(["session-empty", "empty", 0, expect.any(Number)]);
+        expect(calls[3][0]).toBe("COMMIT");
+        expect(calls.some(call => String(call[0]).includes("INSERT INTO ai_digest_results"))).toBe(false);
+    });
+
+    it("isSessionIdProcessed 命中结果表或状态表即视为已处理", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+
+        mockCommonDBService.get.mockResolvedValueOnce({ processed: 1 });
+        await expect(service.isSessionIdProcessed("s1")).resolves.toBe(true);
+
+        const sql = mockCommonDBService.get.mock.calls[0][0] as string;
+
+        expect(sql).toContain("FROM ai_digest_results");
+        expect(sql).toContain("FROM ai_digest_sessions");
+
+        mockCommonDBService.get.mockResolvedValueOnce({ processed: 0 });
+        await expect(service.isSessionIdProcessed("s2")).resolves.toBe(false);
+    });
+
+    it("并发写事务应串行执行，避免事务交错", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+
+        let activeTxn = 0;
+        let maxActiveTxn = 0;
+
+        mockCommonDBService.run.mockImplementation(async (sql: string) => {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (sql === "BEGIN IMMEDIATE TRANSACTION") {
+                activeTxn++;
+                maxActiveTxn = Math.max(maxActiveTxn, activeTxn);
+            }
+            if (sql === "COMMIT" || sql === "ROLLBACK") {
+                activeTxn--;
+            }
+        });
+
+        const oneResult = {
+            topicId: "t",
+            sessionId: "s",
+            topic: "话题",
+            contributors: "[]",
+            detail: "d",
+            modelName: "mock",
+            updateTime: 1
+        };
+
+        await Promise.all([
+            service.storeAIDigestResults([oneResult]),
+            service.storeAIDigestResults([oneResult]),
+            service.markSessionEmpty("s")
+        ]);
+
+        expect(maxActiveTxn).toBe(1);
+    });
 });

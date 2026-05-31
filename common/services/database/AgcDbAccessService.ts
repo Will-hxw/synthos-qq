@@ -43,6 +43,8 @@ export interface LatestTopicPageResult {
 export class AgcDbAccessService extends Disposable {
     private LOGGER = Logger.withTag("AgcDbAccessService");
     private db: CommonDBService | null = null;
+    /** 写操作互斥链：串行化所有写事务，避免多并发回调在同一连接上事务交错 */
+    private writeChain: Promise<unknown> = Promise.resolve();
 
     public async getLatestTopicRecordsPageByTimeRange(
         query: LatestTopicPageQuery
@@ -191,6 +193,64 @@ export class AgcDbAccessService extends Disposable {
     }
 
     /**
+     * 串行化写事务。共享同一 SQLite 连接的并发回调若各自 BEGIN IMMEDIATE，
+     * 会触发 "cannot start a transaction within a transaction" 并丢失写入；
+     * 通过 promise 链保证同一时刻只有一个写事务在执行。
+     */
+    private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+        const result = this.writeChain.then(() => fn());
+
+        // 链尾吞掉异常，避免一次写失败阻断后续所有写操作
+        this.writeChain = result.then(
+            () => undefined,
+            () => undefined
+        );
+
+        return result;
+    }
+
+    /** 在已开启的事务中插入单条摘要结果（不含事务控制） */
+    private async _insertAIDigestResult(result: AIDigestResult): Promise<void> {
+        await this.db.run(
+            `INSERT INTO ai_digest_results (topicId, sessionId, topic, contributors, detail, modelName, updateTime) VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(topicId) DO UPDATE SET
+                sessionId = excluded.sessionId,
+                topic = excluded.topic,
+                contributors = excluded.contributors,
+                detail = excluded.detail,
+                modelName = excluded.modelName,
+                updateTime = excluded.updateTime
+            `,
+            [
+                result.topicId,
+                result.sessionId,
+                result.topic,
+                result.contributors,
+                result.detail,
+                result.modelName,
+                result.updateTime
+            ]
+        );
+    }
+
+    /** 在已开启的事务中写入 session 处理终态（success/empty） */
+    private async _upsertSessionStatus(
+        sessionId: string,
+        status: "success" | "empty",
+        topicCount: number
+    ): Promise<void> {
+        await this.db.run(
+            `INSERT INTO ai_digest_sessions (sessionId, status, topicCount, updateTime) VALUES (?,?,?,?)
+            ON CONFLICT(sessionId) DO UPDATE SET
+                status = excluded.status,
+                topicCount = excluded.topicCount,
+                updateTime = excluded.updateTime
+            `,
+            [sessionId, status, topicCount, Date.now()]
+        );
+    }
+
+    /**
      * 存储多个摘要结果
      * @param results 摘要结果
      */
@@ -199,56 +259,69 @@ export class AgcDbAccessService extends Disposable {
             return;
         }
 
-        await this.db.run("BEGIN IMMEDIATE TRANSACTION");
-        try {
-            for (const result of results) {
-                await this.db.run(
-                    `INSERT INTO ai_digest_results (topicId, sessionId, topic, contributors, detail, modelName, updateTime) VALUES (?,?,?,?,?,?,?)
-                    ON CONFLICT(topicId) DO UPDATE SET
-                        sessionId = excluded.sessionId,
-                        topic = excluded.topic,
-                        contributors = excluded.contributors,
-                        detail = excluded.detail,
-                        modelName = excluded.modelName,
-                        updateTime = excluded.updateTime
-                    `,
-                    [
-                        result.topicId,
-                        result.sessionId,
-                        result.topic,
-                        result.contributors,
-                        result.detail,
-                        result.modelName,
-                        result.updateTime
-                    ]
-                );
-            }
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                for (const result of results) {
+                    await this._insertAIDigestResult(result);
+                }
 
-            await this.db.run("COMMIT");
-        } catch (err) {
-            await this.db.run("ROLLBACK");
-            throw err;
-        }
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
     }
 
     /**
-     * 更新一个sessionId的摘要结果。会先删除该sessionId对应的所有摘要结果（topics），然后再插入新的摘要结果
+     * 幂等提交一个 session 的摘要结果：在单个事务内先删除该 session 旧话题，再插入新话题，
+     * 并写入 success 终态。重复执行同一 session 不会产生重复话题行。
      * @param sessionId 会话id
-     * @param results 摘要结果
+     * @param results 摘要结果（其 sessionId 必须与入参一致）
      */
-    public async updateAIDigestResultBySessionId(sessionId: string, results: AIDigestResult[]): Promise<void> {
-        // 1. 防御性检查：results中所有result的sessionId都必须是指定的sessionId
+    public async commitSessionDigest(sessionId: string, results: AIDigestResult[]): Promise<void> {
         for (const result of results) {
             if (result.sessionId !== sessionId) {
                 throw new Error(`result的sessionId必须是${sessionId}，但实际为${result.sessionId}`);
             }
         }
 
-        // 2. 删除该sessionId对应的所有摘要结果（topics）
-        await this.db.run(`DELETE FROM ai_digest_results WHERE sessionId = ?`, [sessionId]);
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                await this.db.run(`DELETE FROM ai_digest_results WHERE sessionId = ?`, [sessionId]);
+                for (const result of results) {
+                    await this._insertAIDigestResult(result);
+                }
+                await this._upsertSessionStatus(sessionId, "success", results.length);
 
-        // 3. 插入新的摘要结果
-        await this.storeAIDigestResults(results);
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
+    }
+
+    /**
+     * 将一个 session 标记为空摘要终态（LLM 合法返回无有效话题）。
+     * 清除该 session 可能残留的旧话题并写入 empty 终态，使其不再被重复摘要。
+     * @param sessionId 会话id
+     */
+    public async markSessionEmpty(sessionId: string): Promise<void> {
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                await this.db.run(`DELETE FROM ai_digest_results WHERE sessionId = ?`, [sessionId]);
+                await this._upsertSessionStatus(sessionId, "empty", 0);
+
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
     }
 
     /**
@@ -413,6 +486,25 @@ export class AgcDbAccessService extends Disposable {
         ]);
 
         return result[Object.keys(result)[0]] === 1;
+    }
+
+    /**
+     * 检查一个 session 是否已被处理过（产生话题或被标记为空摘要）。
+     * 兼容历史数据：仅有话题行而无状态记录的旧 session 同样视为已处理。
+     * @param sessionId 会话id
+     * @returns 是否已处理
+     */
+    public async isSessionIdProcessed(sessionId: string): Promise<boolean> {
+        const result = await this.db.get<{ processed: number }>(
+            `SELECT EXISTS(
+                SELECT 1 FROM ai_digest_results WHERE sessionId = ?
+                UNION ALL
+                SELECT 1 FROM ai_digest_sessions WHERE sessionId = ?
+            ) AS processed`,
+            [sessionId, sessionId]
+        );
+
+        return (result?.processed ?? 0) === 1;
     }
 
     // 获取数据消息，用于数据库迁移、导出、备份等操作

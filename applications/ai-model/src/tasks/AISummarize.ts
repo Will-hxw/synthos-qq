@@ -173,7 +173,9 @@ export class AISummarizeTaskHandler {
                     }
                 }
 
-                this.LOGGER.info(`共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=5）`);
+                this.LOGGER.info(
+                    `共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=${config.ai.maxConcurrentRequests}）`
+                );
 
                 // 并行处理所有任务，每个任务完成时回调
                 let completedCount = 0;
@@ -197,34 +199,50 @@ export class AISummarizeTaskHandler {
                             const resultStr = result.content!;
                             const selectedModelName = result.selectedModelName!;
 
-                            // 解析llm回传的json结果
-                            let results: Omit<Omit<AIDigestResult, "sessionId">, "topicId">[] = [];
+                            // 解析 llm 回传的 json 结果
+                            const parsed = JSON.parse(resultStr);
 
-                            results = JSON.parse(resultStr);
-                            if (resultStr.length < 30) {
-                                this.LOGGER.warning(
-                                    `session ${sessionId} 生成摘要长度过短，长度为 ${resultStr.length}，跳过`
+                            if (!Array.isArray(parsed)) {
+                                throw new Error(`摘要结果不是数组：${resultStr.slice(0, 100)}`);
+                            }
+
+                            // 批内按 trim(topic) 去重并丢弃空标题，得到本 session 的有效话题
+                            const seenTopics = new Set<string>();
+                            const digestResults: AIDigestResult[] = [];
+
+                            for (const item of parsed as Array<Record<string, unknown>>) {
+                                const topic = typeof item.topic === "string" ? item.topic.trim() : "";
+
+                                if (topic.length === 0 || seenTopics.has(topic)) {
+                                    continue;
+                                }
+                                seenTopics.add(topic);
+                                digestResults.push({
+                                    topicId: getRandomHash(16),
+                                    sessionId,
+                                    topic,
+                                    contributors: JSON.stringify(item.contributors ?? []),
+                                    detail: typeof item.detail === "string" ? item.detail : "",
+                                    modelName: selectedModelName,
+                                    updateTime: Date.now()
+                                });
+                            }
+
+                            // 合法空摘要：写入空终态，避免该 session 被无限重复摘要
+                            if (digestResults.length === 0) {
+                                await this.agcDbAccessService.markSessionEmpty(sessionId);
+                                this.LOGGER.info(
+                                    `[${completedCount}/${allTasks.length}] session ${sessionId} 无有效话题，标记为空摘要`
                                 );
 
                                 return;
                             }
 
+                            // 幂等提交：按 session 替换旧话题并写入成功终态
+                            await this.agcDbAccessService.commitSessionDigest(sessionId, digestResults);
                             this.LOGGER.success(
-                                `[${completedCount}/${allTasks.length}] session ${sessionId} 生成摘要成功，长度为 ${resultStr.length}`
+                                `[${completedCount}/${allTasks.length}] session ${sessionId} 生成并存储 ${digestResults.length} 个话题`
                             );
-
-                            // 遍历ai生成的结果数组，添加sessionId、topicId，并解析contributors
-                            for (const resultItem of results) {
-                                Object.assign(resultItem, { sessionId }); // 添加 sessionId
-                                resultItem.contributors = JSON.stringify(resultItem.contributors); // 转换为字符串
-                                Object.assign(resultItem, { topicId: getRandomHash(16) });
-                                Object.assign(resultItem, { modelName: selectedModelName });
-                                Object.assign(resultItem, { updateTime: Date.now() });
-                            }
-
-                            // 存储摘要结果
-                            await this.agcDbAccessService.storeAIDigestResults(results as AIDigestResult[]);
-                            this.LOGGER.success(`session ${sessionId} 存储摘要成功！`);
                         } catch (error) {
                             this.LOGGER.error(
                                 `session ${sessionId} 处理结果失败，错误信息为：${error}, 跳过该session`
@@ -283,7 +301,7 @@ export class AISummarizeTaskHandler {
             return;
         }
 
-        if (await this.agcDbAccessService.isSessionIdSummarized(sessionId)) {
+        if (await this.agcDbAccessService.isSessionIdProcessed(sessionId)) {
             return;
         }
 

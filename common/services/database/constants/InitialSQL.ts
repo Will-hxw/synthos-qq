@@ -26,7 +26,14 @@ export const createAGCTableSQL = `
                     modelName TEXT,
                     updateTime INTEGER
                 );
-                CREATE INDEX IF NOT EXISTS idx_ai_digest_results_sessionId ON ai_digest_results(sessionId);`;
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_results_sessionId ON ai_digest_results(sessionId);
+                CREATE TABLE IF NOT EXISTS ai_digest_sessions (
+                    sessionId TEXT NOT NULL PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    topicCount INTEGER NOT NULL DEFAULT 0,
+                    updateTime INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status ON ai_digest_sessions(status);`;
 
 export const createInterestScoreTableSQL = `
                 CREATE TABLE IF NOT EXISTS interset_score_results (
