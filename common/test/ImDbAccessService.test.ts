@@ -80,4 +80,40 @@ describe("ImDbAccessService", () => {
         expect(sql).toContain("HAVING COUNT(ar.topicId) = 0");
         expect(params).toEqual(["group-a", 10]);
     });
+
+    it("应批量查询会话时间范围并按输入顺序返回，缺失会话以 undefined 占位", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            { sessionId: "session-2", timeStart: 300, timeEnd: 500 },
+            { sessionId: "session-1", timeStart: 100, timeEnd: 200 }
+        ]);
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getSessionTimeDurations(["session-1", "session-2", "session-missing"]);
+
+        // 单次 GROUP BY 聚合，而非逐 sessionId 查询
+        expect(mockCommonDBService.all).toHaveBeenCalledTimes(1);
+        expect(mockCommonDBService.all).toHaveBeenCalledWith(
+            `SELECT sessionId, MIN(timestamp) AS timeStart, MAX(timestamp) AS timeEnd
+                 FROM chat_messages
+                 WHERE sessionId IN (?,?,?)
+                 GROUP BY sessionId`,
+            ["session-1", "session-2", "session-missing"]
+        );
+        expect(result).toEqual([
+            { sessionId: "session-1", timeStart: 100, timeEnd: 200 },
+            { sessionId: "session-2", timeStart: 300, timeEnd: 500 },
+            { sessionId: "session-missing", timeStart: undefined, timeEnd: undefined }
+        ]);
+    });
+
+    it("批量查询会话时间范围传入空数组应直接返回空且不查库", async () => {
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getSessionTimeDurations([]);
+
+        expect(result).toEqual([]);
+        expect(mockCommonDBService.all).not.toHaveBeenCalled();
+    });
 });

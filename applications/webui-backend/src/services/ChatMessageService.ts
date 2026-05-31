@@ -32,19 +32,7 @@ export class ChatMessageService {
      * 获取多个 sessionId 的时间范围
      */
     async getSessionTimeDurations(sessionIds: string[]) {
-        const results = [];
-
-        for (const sessionId of sessionIds) {
-            const result = await this.imDbAccessService.getSessionTimeDuration(sessionId);
-
-            results.push({
-                sessionId,
-                timeStart: result?.timeStart,
-                timeEnd: result?.timeEnd
-            });
-        }
-
-        return results;
+        return await this.imDbAccessService.getSessionTimeDurations(sessionIds);
     }
 
     /**

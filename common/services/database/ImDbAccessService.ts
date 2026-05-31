@@ -261,6 +261,56 @@ export class ImDbAccessService extends Disposable {
     }
 
     /**
+     * 批量获取多个会话的开始和结束时间。
+     * 用单条 GROUP BY 聚合替代逐 sessionId 查询，避免 N+1 往返。
+     * @param sessionIds 会话ID数组
+     * @returns 每个会话的时间范围；不存在消息的会话 timeStart/timeEnd 为 undefined
+     */
+    public async getSessionTimeDurations(
+        sessionIds: string[]
+    ): Promise<Array<{ sessionId: string; timeStart: number | undefined; timeEnd: number | undefined }>> {
+        if (sessionIds.length === 0) {
+            return [];
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+        const durationMap = new Map<string, { timeStart: number; timeEnd: number }>();
+
+        for (let i = 0; i < sessionIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = sessionIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(",");
+            const rows = await this.db.all<{
+                sessionId: string;
+                timeStart: number | null;
+                timeEnd: number | null;
+            }>(
+                `SELECT sessionId, MIN(timestamp) AS timeStart, MAX(timestamp) AS timeEnd
+                 FROM chat_messages
+                 WHERE sessionId IN (${placeholders})
+                 GROUP BY sessionId`,
+                batch
+            );
+
+            for (const row of rows) {
+                if (row.timeStart !== null && row.timeEnd !== null) {
+                    durationMap.set(row.sessionId, { timeStart: row.timeStart, timeEnd: row.timeEnd });
+                }
+            }
+        }
+
+        // 按入参顺序返回，缺失的会话以 undefined 占位，保持与旧逐条实现一致的结构
+        return sessionIds.map(sessionId => {
+            const duration = durationMap.get(sessionId);
+
+            return {
+                sessionId,
+                timeStart: duration?.timeStart,
+                timeEnd: duration?.timeEnd
+            };
+        });
+    }
+
+    /**
      * 获取指定群组中尚未分配 sessionId 的消息统计。
      * @param groupId 群组ID
      * @returns 未处理消息的数量和时间范围
