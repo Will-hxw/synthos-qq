@@ -247,7 +247,10 @@ export default function LatestTopicsPage() {
         setSearchParams(newParams, { replace: true });
     }, [selectedGroupId, filterRead, filterFavorite, sortByInterest, searchText, page, topicsPerPage, dateRange, isInitializedFromUrl, setSearchParams]);
 
-    const fetchLatestTopics = async () => {
+    const fetchLatestTopics = async (options?: { silent?: boolean }) => {
+        // silent：用于乐观更新后的后台回填。不切换 loading，避免整列表被 Spinner 顶替
+        // 造成闪烁——乐观删除已让条目平滑消失，此处只在原地把下一条补进当前页。
+        const silent = options?.silent ?? false;
         const requestId = requestSeqRef.current + 1;
         const abortController = new AbortController();
         const signal = abortController.signal;
@@ -257,7 +260,9 @@ export default function LatestTopicsPage() {
         abortLatestTopicsRequest();
         requestSeqRef.current = requestId;
         latestTopicsAbortRef.current = abortController;
-        setLoading(true);
+        if (!silent) {
+            setLoading(true);
+        }
         try {
             const [startTime, endTime] = [normalizeUnixMsTimestamp(start), normalizeUnixMsTimestamp(end)];
             const response = await getLatestTopics(
@@ -300,7 +305,7 @@ export default function LatestTopicsPage() {
                 latestTopicsAbortRef.current = null;
             }
 
-            if (requestSeqRef.current === requestId && !signal.aborted) {
+            if (requestSeqRef.current === requestId && !signal.aborted && !silent) {
                 setLoading(false);
             }
         }
@@ -366,7 +371,7 @@ export default function LatestTopicsPage() {
             if (filterRead) {
                 setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
                 setTotalTopics(prev => Math.max(0, prev - 1));
-                await fetchLatestTopics();
+                await fetchLatestTopics({ silent: true });
             }
         } catch (error) {
             console.error("Failed to mark topic as read:", error);
@@ -404,7 +409,7 @@ export default function LatestTopicsPage() {
                 if (filterFavorite) {
                     setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
                     setTotalTopics(prev => Math.max(0, prev - 1));
-                    await fetchLatestTopics();
+                    await fetchLatestTopics({ silent: true });
                 }
             } else {
                 // 添加收藏
@@ -651,7 +656,7 @@ export default function LatestTopicsPage() {
 
                                                     setTopics(prev => prev.filter(topic => !unreadTopicIds.has(topic.topicId)));
                                                     setTotalTopics(prev => Math.max(0, prev - unreadTopics.length));
-                                                    await fetchLatestTopics();
+                                                    await fetchLatestTopics({ silent: true });
                                                 }
 
                                                 Notification.success({
