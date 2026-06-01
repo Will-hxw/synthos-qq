@@ -148,6 +148,23 @@ describe("EmbeddingService", () => {
             );
         });
 
+        it("should throw error if embedding contains non-finite values", async () => {
+            const invalidEmbedding = Array(TEST_DIMENSION).fill(0.1);
+
+            invalidEmbedding[3] = Number.NaN;
+
+            mockAxiosInstance.post.mockResolvedValueOnce({
+                data: {
+                    model: TEST_MODEL,
+                    embeddings: [invalidEmbedding]
+                }
+            });
+
+            await expect(service.embedBatch(["测试"])).rejects.toThrow(
+                "嵌入向量包含非法数值：index=0, dimension=3"
+            );
+        });
+
         it("should throw error if embeddings field is missing", async () => {
             mockAxiosInstance.post.mockResolvedValueOnce({
                 data: {

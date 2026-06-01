@@ -202,4 +202,13 @@ describe("SemanticRater", () => {
         expect(score).toBeGreaterThanOrEqual(-1);
         expect(score).toBeLessThanOrEqual(0);
     });
+
+    it("should not use spread Math.max for large keyword lists", async () => {
+        const interests = Array.from({ length: 70000 }, () => ({ keyword: "人工智能", liked: true }));
+
+        const score = await rater.scoreTopic(interests, "人工智能发展");
+
+        expect(score).toBeGreaterThanOrEqual(-1);
+        expect(score).toBeLessThanOrEqual(1);
+    });
 });

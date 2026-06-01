@@ -2,7 +2,7 @@
  * 打字机效果组件
  * 用于逐字显示文本，模拟打字效果
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface TypingTextProps {
     /** 要显示的文本内容 */
@@ -24,13 +24,18 @@ interface TypingTextProps {
 const TypingText: React.FC<TypingTextProps> = ({ text, speed = 30, enabled = true, onComplete, className = "" }) => {
     const [displayedText, setDisplayedText] = useState("");
     const [currentIndex, setCurrentIndex] = useState(0);
+    const onCompleteRef = useRef(onComplete);
+
+    useEffect(() => {
+        onCompleteRef.current = onComplete;
+    }, [onComplete]);
 
     useEffect(() => {
         // 如果禁用打字效果，直接显示全部文本
         if (!enabled) {
             setDisplayedText(text);
             setCurrentIndex(text.length);
-            onComplete?.();
+            onCompleteRef.current?.();
 
             return;
         }
@@ -43,7 +48,7 @@ const TypingText: React.FC<TypingTextProps> = ({ text, speed = 30, enabled = tru
     useEffect(() => {
         if (!enabled || currentIndex >= text.length) {
             if (currentIndex >= text.length && enabled) {
-                onComplete?.();
+                onCompleteRef.current?.();
             }
 
             return;
@@ -55,7 +60,7 @@ const TypingText: React.FC<TypingTextProps> = ({ text, speed = 30, enabled = tru
         }, speed);
 
         return () => clearTimeout(timer);
-    }, [currentIndex, text, speed, enabled, onComplete]);
+    }, [currentIndex, text, speed, enabled]);
 
     return <span className={className}>{displayedText}</span>;
 };

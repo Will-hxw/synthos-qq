@@ -182,9 +182,21 @@ export const agentAskStream = async (
     if (!response.ok) {
         let errorMsg = `请求失败: ${response.status}`;
         let code: string | undefined;
+        const contentType = response.headers.get("Content-Type") || "";
 
         try {
-            const json = (await response.json()) as any;
+            let json: any;
+
+            if (contentType.includes("text/event-stream")) {
+                const text = await response.text();
+                const msg = _parseSseBlock(text);
+
+                if (msg) {
+                    json = JSON.parse(msg.data);
+                }
+            } else {
+                json = (await response.json()) as any;
+            }
 
             if (json && typeof json.error === "string") {
                 errorMsg = json.error;
@@ -245,19 +257,7 @@ export const getAgentConversations = async (sessionId: string | undefined, befor
  * 获取对话的消息列表
  * @param conversationId 对话ID
  */
-export const getAgentConversationsPage = async (sessionId: string | undefined, beforeUpdatedAt: number | undefined, limit: number = 20): Promise<ApiResponse<AgentConversation[]>> => {
-    if (mockConfig.agent) {
-        return mockGetAgentConversations(sessionId, beforeUpdatedAt, limit);
-    }
-
-    const response = await fetchWrapper(`${API_BASE_URL}/api/agent/conversations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, beforeUpdatedAt, limit })
-    });
-
-    return response.json();
-};
+export const getAgentConversationsPage = getAgentConversations;
 
 export const getAgentMessages = async (conversationId: string, beforeTimestamp: number | undefined, limit: number = 20): Promise<ApiResponse<AgentMessage[]>> => {
     if (mockConfig.agent) {

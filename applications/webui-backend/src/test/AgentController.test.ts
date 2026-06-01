@@ -56,7 +56,7 @@ describe("AgentController.askStream", () => {
         vi.useRealTimers();
     });
 
-    it("并发拒绝时返回 409 且带可机读的 code", async () => {
+    it("并发拒绝时返回 409 SSE 错误帧且带可机读的 code", async () => {
         const agentService = {
             tryAcquireConversationLock: vi.fn().mockReturnValue(false),
             releaseConversationLock: vi.fn(),
@@ -69,11 +69,11 @@ describe("AgentController.askStream", () => {
         await controller.askStream(req, res);
 
         expect(res.statusCode).toBe(409);
-        expect(res.json).toHaveBeenCalledWith({
-            success: false,
-            code: "CONVERSATION_RUNNING",
-            error: "该对话正在运行中，请等待当前请求完成"
-        });
+        expect(res.setHeader).toHaveBeenCalledWith("Content-Type", "text/event-stream; charset=utf-8");
+        expect(res._written.join("")).toContain("event: error");
+        expect(res._written.join("")).toContain('"code":"CONVERSATION_RUNNING"');
+        expect(res._written.join("")).toContain("该对话正在运行中，请等待当前请求完成");
+        expect(res.end).toHaveBeenCalled();
         // 没拿到锁就不应该释放锁，也不应该跑流式
         expect(agentService.askAgentStream).not.toHaveBeenCalled();
         expect(agentService.releaseConversationLock).not.toHaveBeenCalled();

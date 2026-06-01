@@ -28,13 +28,41 @@ export function useAskState({ onReferences, onDone }: UseAskStateOptions) {
     const askUnsubscribeRef = useRef<{ unsubscribe: () => void } | null>(null);
     const currentAnswerRef = useRef("");
     const currentReferencesRef = useRef<ReferenceItem[]>([]);
+    const tokenBufferRef = useRef("");
+    const rafIdRef = useRef<number | null>(null);
+
+    const flushTokenBuffer = useCallback(() => {
+        rafIdRef.current = null;
+
+        if (!tokenBufferRef.current) {
+            return;
+        }
+
+        tokenBufferRef.current = "";
+        setAskResponse(prev => {
+            if (!prev) {
+                return { answer: currentAnswerRef.current, references: currentReferencesRef.current };
+            }
+
+            return { ...prev, answer: currentAnswerRef.current };
+        });
+    }, []);
+
+    const cancelPendingFlush = useCallback(() => {
+        tokenBufferRef.current = "";
+        if (rafIdRef.current !== null) {
+            cancelAnimationFrame(rafIdRef.current);
+            rafIdRef.current = null;
+        }
+    }, []);
 
     const stopAsk = useCallback(() => {
         if (askUnsubscribeRef.current) {
             askUnsubscribeRef.current.unsubscribe();
             askUnsubscribeRef.current = null;
         }
-    }, []);
+        cancelPendingFlush();
+    }, [cancelPendingFlush]);
 
     useEffect(() => {
         return () => {
@@ -58,6 +86,7 @@ export function useAskState({ onReferences, onDone }: UseAskStateOptions) {
             setAskResponse({ answer: "", references: [] });
             currentAnswerRef.current = "";
             currentReferencesRef.current = [];
+            cancelPendingFlush();
 
             // 清理旧订阅
             stopAsk();
@@ -74,13 +103,11 @@ export function useAskState({ onReferences, onDone }: UseAskStateOptions) {
                             const content = chunk.content;
 
                             currentAnswerRef.current += content;
-                            setAskResponse(prev => {
-                                if (!prev) {
-                                    return { answer: content, references: [] };
-                                }
+                            tokenBufferRef.current += content;
 
-                                return { ...prev, answer: prev.answer + content };
-                            });
+                            if (rafIdRef.current === null) {
+                                rafIdRef.current = requestAnimationFrame(flushTokenBuffer);
+                            }
                         } else if (chunk.type === "references" && chunk.references) {
                             const refs = chunk.references as ReferenceItem[];
 
@@ -95,10 +122,13 @@ export function useAskState({ onReferences, onDone }: UseAskStateOptions) {
                             onReferences?.(refs);
                         } else if (chunk.type === "error") {
                             console.error("Ask stream error:", chunk.error);
+                            cancelPendingFlush();
                             setCurrentSessionIsFailed(true);
                             setCurrentSessionFailReason(chunk.error || "");
-                            setAskResponse(prev => (prev ? { ...prev, answer: prev.answer + `\n\n[Error: ${chunk.error}]` } : null));
+                            currentAnswerRef.current += `\n\n[Error: ${chunk.error}]`;
+                            setAskResponse(prev => (prev ? { ...prev, answer: currentAnswerRef.current } : null));
                         } else if (chunk.type === "done") {
+                            flushTokenBuffer();
                             onDone?.(chunk as AskDoneChunk);
                             if ((chunk as AskDoneChunk).isFailed) {
                                 setCurrentSessionIsFailed(true);
@@ -122,7 +152,7 @@ export function useAskState({ onReferences, onDone }: UseAskStateOptions) {
                 setAskLoading(false);
             }
         },
-        [onDone, onReferences, stopAsk]
+        [cancelPendingFlush, flushTokenBuffer, onDone, onReferences, stopAsk]
     );
 
     return {

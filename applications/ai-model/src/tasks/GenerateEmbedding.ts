@@ -75,7 +75,7 @@ export class GenerateEmbeddingTaskHandler {
                 this.LOGGER.info(`共获取到 ${digestResults.length} 条摘要结果`);
 
                 // 过滤出未生成嵌入的 topicId
-                const allTopicIds = digestResults.map(r => r.topicId);
+                const allTopicIds = Array.from(new Set(digestResults.map(r => r.topicId)));
                 const topicIdsWithoutEmbedding = this.vectorDBManagerService.filterWithoutEmbedding(allTopicIds);
 
                 this.LOGGER.info(`其中 ${topicIdsWithoutEmbedding.length} 条需要生成嵌入向量`);

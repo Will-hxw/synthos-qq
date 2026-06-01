@@ -26,7 +26,7 @@ export class SystemMonitorService {
     }
 
     public getStatsHistory(): SystemStats[] {
-        return this.statsHistory;
+        return [...this.statsHistory];
     }
 
     private startCollection() {

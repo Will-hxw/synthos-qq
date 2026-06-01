@@ -304,7 +304,7 @@ export default function ReportsPage() {
 
     // 打开详情弹窗（拉取 detail + references 用于高亮与 cardlist）
     const openReportDetail = async (report: Report) => {
-        setSelectedReport(report);
+        setSelectedReport(null);
         setSelectedReferences([]);
         setIsModalOpen(true);
 

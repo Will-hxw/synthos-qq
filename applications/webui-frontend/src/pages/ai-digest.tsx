@@ -239,13 +239,13 @@ export default function AIDigestPage() {
                     </CardHeader>
                     <CardBody>
                         <div className="flex gap-3">
-                            <Button color="primary" variant="bordered">
+                            <Button isDisabled color="primary" variant="bordered">
                                 导出为PDF
                             </Button>
-                            <Button color="primary" variant="bordered">
+                            <Button isDisabled color="primary" variant="bordered">
                                 导出为Word
                             </Button>
-                            <Button color="primary" variant="bordered">
+                            <Button isDisabled color="primary" variant="bordered">
                                 导出为Markdown
                             </Button>
                         </div>

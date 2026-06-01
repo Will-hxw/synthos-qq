@@ -3,13 +3,35 @@
  */
 import type { NumberInputProps } from "../../types/index";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Input } from "@heroui/input";
 
 /**
  * 数字类型配置项的输入组件
  */
 const NumberInput: React.FC<NumberInputProps> = ({ label, labelNode, path, value, description, min, max, onChange, error }) => {
+    const [inputValue, setInputValue] = useState(value.toString());
+
+    useEffect(() => {
+        setInputValue(value.toString());
+    }, [value]);
+
+    const handleChange = (nextValue: string) => {
+        setInputValue(nextValue);
+
+        if (nextValue === "") {
+            return;
+        }
+
+        const parsed = Number.parseFloat(nextValue);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
+        onChange(path, parsed);
+    };
+
     return (
         <div className="flex items-center min-h-8">
             <label className="text-sm font-medium w-40 shrink-0">{labelNode || label}</label>
@@ -27,8 +49,8 @@ const NumberInput: React.FC<NumberInputProps> = ({ label, labelNode, path, value
                 min={min}
                 size="sm"
                 type="number"
-                value={value?.toString() || "0"}
-                onChange={e => onChange(path, parseFloat(e.target.value) || 0)}
+                value={inputValue}
+                onValueChange={handleChange}
             />
         </div>
     );

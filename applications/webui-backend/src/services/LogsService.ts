@@ -88,7 +88,7 @@ export class LogsService {
         if (items.length > 0) {
             const oldest = items[items.length - 1];
 
-            nextBefore = Math.max(0, oldest.timestamp - 1);
+            nextBefore = oldest.timestamp;
         }
 
         return {

@@ -33,10 +33,10 @@ const DEFAULT_AVATAR_PLACEHOLDER =
 function getAvatarUrl(type: QQAvatarType, qqId: string): string {
     if (type === "group") {
         // QQ群头像
-        return `http://p.qlogo.cn/gh/${qqId}/${qqId}/0`;
+        return `https://p.qlogo.cn/gh/${qqId}/${qqId}/0`;
     } else {
         // QQ用户头像
-        return `http://q.qlogo.cn/headimg_dl?dst_uin=${qqId}&spec=640`;
+        return `https://q.qlogo.cn/headimg_dl?dst_uin=${qqId}&spec=640`;
     }
 }
 

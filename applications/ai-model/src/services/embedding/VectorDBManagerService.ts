@@ -116,9 +116,7 @@ export class VectorDBManagerService extends Disposable {
      * @param embedding 向量数据
      */
     public storeEmbedding(topicId: string, embedding: Float32Array): void {
-        if (embedding.length !== this.dimension) {
-            throw new Error(`向量维度不匹配：期望 ${this.dimension}，实际 ${embedding.length}`);
-        }
+        this._assertValidEmbedding(topicId, embedding);
 
         // 使用事务确保原子性
         const transaction = this.db!.transaction(() => {
@@ -162,11 +160,7 @@ export class VectorDBManagerService extends Disposable {
 
         const transaction = this.db!.transaction(() => {
             for (const item of items) {
-                if (item.embedding.length !== this.dimension) {
-                    throw new Error(
-                        `向量维度不匹配：期望 ${this.dimension}，实际 ${item.embedding.length}，topicId: ${item.topicId}`
-                    );
-                }
+                this._assertValidEmbedding(item.topicId, item.embedding);
 
                 // 如果 topicId 已存在，先删除旧向量，避免产生孤儿记录
                 this._doDeleteEmbedding(item.topicId);
@@ -323,20 +317,36 @@ export class VectorDBManagerService extends Disposable {
      * @returns 不存在嵌入的 topicId 数组
      */
     public filterWithoutEmbedding(topicIds: string[]): string[] {
-        if (topicIds.length === 0) {
+        const uniqueTopicIds = Array.from(new Set(topicIds));
+
+        if (uniqueTopicIds.length === 0) {
             return [];
         }
 
         // 批量查询已存在的 topicId
-        const placeholders = topicIds.map(() => "?").join(",");
+        const placeholders = uniqueTopicIds.map(() => "?").join(",");
         const stmt = this.db!.prepare(`
             SELECT topic_id FROM topic_vector_mapping WHERE topic_id IN (${placeholders})
         `);
-        const existingRows = stmt.all(...topicIds) as Array<{ topic_id: string }>;
+        const existingRows = stmt.all(...uniqueTopicIds) as Array<{ topic_id: string }>;
         const existingSet = new Set(existingRows.map(row => row.topic_id));
 
         // 返回不存在的 topicId
-        return topicIds.filter(id => !existingSet.has(id));
+        return uniqueTopicIds.filter(id => !existingSet.has(id));
+    }
+
+    private _assertValidEmbedding(topicId: string, embedding: Float32Array): void {
+        if (embedding.length !== this.dimension) {
+            throw new Error(
+                `向量维度不匹配：期望 ${this.dimension}，实际 ${embedding.length}，topicId: ${topicId}`
+            );
+        }
+
+        for (let i = 0; i < embedding.length; i++) {
+            if (!Number.isFinite(embedding[i])) {
+                throw new Error(`向量包含非法数值：topicId=${topicId}, dimension=${i}`);
+            }
+        }
     }
 
     /**

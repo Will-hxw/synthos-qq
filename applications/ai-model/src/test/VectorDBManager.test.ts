@@ -84,7 +84,17 @@ describe("VectorDBManagerService", () => {
             const wrongEmbedding = generateRandomVector(64); // 错误维度
 
             expect(() => manager.storeEmbedding(topicId, wrongEmbedding)).toThrow(
-                `向量维度不匹配：期望 ${TEST_DIMENSION}，实际 64`
+                `向量维度不匹配：期望 ${TEST_DIMENSION}，实际 64，topicId: ${topicId}`
+            );
+        });
+
+        it("should reject embeddings with non-finite values", () => {
+            const embedding = generateRandomVector(TEST_DIMENSION);
+
+            embedding[5] = Number.POSITIVE_INFINITY;
+
+            expect(() => manager.storeEmbedding("invalid-value", embedding)).toThrow(
+                "向量包含非法数值：topicId=invalid-value, dimension=5"
             );
         });
 
@@ -171,6 +181,20 @@ describe("VectorDBManagerService", () => {
             const result = manager.filterWithoutEmbedding(topicIds);
 
             expect(result).toEqual(["new-001", "new-002"]);
+        });
+
+        it("should de-duplicate input topicIds while preserving first-seen order", () => {
+            manager.storeEmbedding("existing-dup", generateRandomVector(TEST_DIMENSION));
+
+            const result = manager.filterWithoutEmbedding([
+                "new-dup",
+                "new-dup",
+                "existing-dup",
+                "another-new",
+                "another-new"
+            ]);
+
+            expect(result).toEqual(["new-dup", "another-new"]);
         });
 
         it("should return empty array if all have embeddings", () => {

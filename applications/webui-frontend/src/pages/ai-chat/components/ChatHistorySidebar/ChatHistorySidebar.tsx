@@ -44,9 +44,14 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     const [agentConversations, setAgentConversations] = useState<AgentConversation[]>([]);
     const [agentLoading, setAgentLoading] = useState(false);
     const [agentHasMore, setAgentHasMore] = useState(false);
+    const sessionsLengthRef = useRef(0);
 
     const PAGE_SIZE = 20;
     const showFullSidebar = mobile || !collapsed;
+
+    useEffect(() => {
+        sessionsLengthRef.current = sessions.length;
+    }, [sessions.length]);
 
     const loadAgentConversations = useCallback(
         async (append: boolean = false, beforeUpdatedAt?: number) => {
@@ -118,7 +123,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         async (append: boolean = false) => {
             setLoading(true);
             try {
-                const offset = append ? sessions.length : 0;
+                const offset = append ? sessionsLengthRef.current : 0;
                 const response = await getSessionList(PAGE_SIZE, offset);
 
                 if (response.success) {
@@ -136,7 +141,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 setLoading(false);
             }
         },
-        [sessions.length]
+        []
     );
 
     const autoLoadLockRef = useRef(false);
@@ -188,7 +193,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     // 初始加载和刷新
     useEffect(() => {
         loadSessions(false);
-    }, [refreshTrigger]);
+    }, [loadSessions, refreshTrigger]);
 
     // Agent: 初始加载 / 切换 session / 刷新
     useEffect(() => {

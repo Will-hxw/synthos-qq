@@ -27,15 +27,14 @@ const EnhancedDetail: React.FC<EnhancedDetailProps> = ({ detail, contributors })
 
         // 先分割文本为名称和非名称部分
         const nameParts = nameRegex ? text.split(nameRegex) : [text];
+        const contributorNameSet = new Set(names);
 
         // 对每个部分进一步处理链接
         const finalParts: React.ReactNode[] = [];
 
         nameParts.forEach((part, partIndex) => {
             // 检查这个部分是否是参与者名称
-            const contributorIndex = names.indexOf(part);
-
-            if (contributorIndex !== -1) {
+            if (contributorNameSet.has(part)) {
                 // 如果是参与者名称，直接返回Chip组件
                 finalParts.push(
                     <Chip

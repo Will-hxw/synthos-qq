@@ -155,13 +155,11 @@ export class ReportService {
      * 批量检查日报已读状态
      */
     public async checkReadStatus(reportIds: string[]): Promise<Record<string, boolean>> {
-        const readStatus: Record<string, boolean> = {};
+        const entries = await Promise.all(
+            reportIds.map(async reportId => [reportId, await this.readStatusManager.isReportRead(reportId)] as const)
+        );
 
-        for (const reportId of reportIds) {
-            readStatus[reportId] = await this.readStatusManager.isReportRead(reportId);
-        }
-
-        return readStatus;
+        return Object.fromEntries(entries);
     }
 
     /**

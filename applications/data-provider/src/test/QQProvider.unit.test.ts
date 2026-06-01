@@ -442,6 +442,43 @@ describe("QQProvider", () => {
             expect(result).toHaveLength(0);
         });
 
+        it("正文为空但引用内容有效时应保留消息", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.REPLY,
+                [GMC.replyMsgSeq]: 123,
+                [GMC.extraData]: Buffer.from("mock extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment
+                .mockReturnValueOnce({
+                    extraMessage: {
+                        messages: [
+                            {
+                                messageId: "quoted_1",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "被引用的内容"
+                            }
+                        ]
+                    }
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "elem_1",
+                            elementType: 999,
+                            messageText: ""
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("");
+            expect(result[0].quotedMsgContent).toBe("被引用的内容");
+        });
+
         it("消息正文 protobuf 解析失败时应跳过该消息", async () => {
             const mockRow = createMockDbRow();
 
@@ -479,15 +516,17 @@ describe("QQProvider", () => {
             expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining("发送者: 测试昵称"));
         });
 
-        it("指定群号时应在 SQL 中包含群号条件", async () => {
+        it("指定群号时应使用参数化 SQL 条件", async () => {
             mockDbMethods.all.mockResolvedValue([]);
             mockParserMethods.parseMessageSegment.mockReturnValue({ messages: [] });
 
             await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000, mockGroupId);
 
             const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as string[];
 
-            expect(sqlCall).toContain(`"${GMC.peeruin}" = ${mockGroupId}`);
+            expect(sqlCall).toContain(`"${GMC.peeruin}" = ?`);
+            expect(paramsCall).toEqual([mockGroupId]);
         });
 
         it("groupUin 为空时应使用 peeruin 作为群号", async () => {

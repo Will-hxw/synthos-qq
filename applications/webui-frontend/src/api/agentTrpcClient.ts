@@ -27,13 +27,20 @@ function getAiModelWsUrl() {
 
 let _client: any | null = null;
 
+const MAX_WS_RETRY_DELAY_MS = 30 * 1000;
+
+function getWsRetryDelayMs(attemptIndex: number): number {
+    return Math.min(1000 * 2 ** attemptIndex, MAX_WS_RETRY_DELAY_MS);
+}
+
 export function getAgentTrpcClient() {
     if (_client) {
         return _client;
     }
 
     const wsClient = createWSClient({
-        url: getAiModelWsUrl()
+        url: getAiModelWsUrl(),
+        retryDelayMs: getWsRetryDelayMs
     });
 
     _client = createTRPCProxyClient<any>({

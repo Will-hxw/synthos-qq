@@ -54,11 +54,19 @@ export class AgentController {
 
         // 单实例并发拒绝：同 conversationId 不允许并行跑
         if (!this.agentService.tryAcquireConversationLock(conversationId)) {
-            res.status(409).json({
-                success: false,
-                code: "CONVERSATION_RUNNING",
-                error: "该对话正在运行中，请等待当前请求完成"
-            });
+            res.status(409);
+            res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
+            res.write(
+                `event: error\ndata: ${JSON.stringify({
+                    type: "error",
+                    ts: Date.now(),
+                    conversationId,
+                    code: "CONVERSATION_RUNNING",
+                    error: "该对话正在运行中，请等待当前请求完成"
+                })}\n\n`
+            );
+            res.end();
 
             return;
         }

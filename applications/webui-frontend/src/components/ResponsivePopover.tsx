@@ -32,11 +32,15 @@ interface ResponsivePopoverProps {
 const ResponsivePopover: React.FC<ResponsivePopoverProps> = ({ buttonText, children }) => {
     const isSmallScreen = useMediaQuery("(max-width: 1023px)");
 
+    useEffect(() => {
+        if (isSmallScreen) {
+            setViewportScale(90);
+        }
+    }, [isSmallScreen]);
+
     if (!isSmallScreen) {
         return <>{children}</>;
     }
-
-    setViewportScale(90);
 
     return (
         <Popover placement="bottom">

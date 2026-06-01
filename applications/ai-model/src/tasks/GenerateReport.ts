@@ -222,8 +222,6 @@ export class GenerateReportTaskHandler {
                         }
                     }
 
-                    this.textGeneratorService.dispose();
-
                     // 9. 保存日报
                     const report: Report = {
                         reportId,

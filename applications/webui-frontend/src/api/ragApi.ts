@@ -17,7 +17,11 @@ export type { ReferenceItem, SearchResultItem, AskResponse } from "@/types/rag";
  * @param query 搜索查询
  * @param limit 返回结果数量限制
  */
-export const search = async (query: string, limit: number = 10): Promise<ApiResponse<SearchResponse>> => {
+export const search = async (
+    query: string,
+    limit: number = 10,
+    signal?: AbortSignal
+): Promise<ApiResponse<SearchResponse>> => {
     // 如果启用了 mock，使用 mock 数据
     if (mockConfig.rag) {
         return mockSearch(query, limit);
@@ -26,6 +30,7 @@ export const search = async (query: string, limit: number = 10): Promise<ApiResp
     const response = await fetchWrapper(`${API_BASE_URL}/api/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal,
         body: JSON.stringify({ query, limit })
     });
 

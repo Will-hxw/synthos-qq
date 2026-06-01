@@ -208,24 +208,12 @@ export class SemanticRater {
 
             // 正向：取最大相似度（若无正向关键词，则为 0）
             if (positiveKeywords.length > 0) {
-                const posSims = positiveKeywords.map(keyword => {
-                    const vec = positiveKeywordVectors.get(keyword)!;
-
-                    return this.cosineSimilarity(vec, topicVec);
-                });
-
-                posSim = Math.max(...posSims);
+                posSim = this._getMaxSimilarity(positiveKeywords, positiveKeywordVectors, topicVec);
             }
 
             // 负向：取最大相似度（若无负向关键词，则为 0）
             if (negativeKeywords.length > 0) {
-                const negSims = negativeKeywords.map(keyword => {
-                    const vec = negativeKeywordVectors.get(keyword)!;
-
-                    return this.cosineSimilarity(vec, topicVec);
-                });
-
-                negSim = Math.max(...negSims);
+                negSim = this._getMaxSimilarity(negativeKeywords, negativeKeywordVectors, topicVec);
             }
 
             let score = posSim - negSim; // 理论范围 [-1, 1]
@@ -235,6 +223,26 @@ export class SemanticRater {
         }
 
         return scores;
+    }
+
+    private _getMaxSimilarity(
+        keywords: string[],
+        keywordVectors: Map<string, Float32Array>,
+        topicVec: Float32Array
+    ): number {
+        let maxSim = 0;
+
+        for (const keyword of keywords) {
+            const vec = keywordVectors.get(keyword)!;
+
+            const sim = this.cosineSimilarity(vec, topicVec);
+
+            if (sim > maxSim) {
+                maxSim = sim;
+            }
+        }
+
+        return maxSim;
     }
 
     /**

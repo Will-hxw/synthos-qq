@@ -508,11 +508,11 @@ export class QQProvider extends Disposable implements IIMProvider {
                 FROM group_msg_table 
                 WHERE ${await this._getPatchSQL()} 
                 AND ("${GMC.msgTime}" BETWEEN ${timeStart} AND ${timeEnd})
-                ${groupId ? `AND "${GMC.peeruin}" = ${groupId}` : ""}
+                ${groupId ? `AND "${GMC.peeruin}" = ?` : ""}
             `;
 
             this.LOGGER.debug(`执行的SQL: ${sql}`);
-            const results = await this.db.all(sql);
+            const results = await this.db.all(sql, groupId ? [groupId] : []);
 
             this.LOGGER.debug(`结果数量: ${results.length}`);
 
@@ -586,7 +586,7 @@ export class QQProvider extends Disposable implements IIMProvider {
 
                     throw error;
                 }
-                if (processedMsg.messageContent === "") {
+                if (processedMsg.messageContent === "" && !processedMsg.quotedMsgContent) {
                     this.LOGGER.debug(
                         `msgId: ${result[GMC.msgId]}的消息内容为空，忽略该消息。
                         发送者: ${this._getSenderDisplayName(result)}`

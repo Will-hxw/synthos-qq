@@ -41,7 +41,7 @@ const TopicPopover: React.FC<TopicPopoverProps> = ({ children, favoriteTopics = 
     const [hasLoaded, setHasLoaded] = useState(false);
     const isMobile = useMediaQuery("(max-width: 767px)");
 
-    const loadTopicDetail = async () => {
+    const loadTopicDetail = useCallback(async () => {
         if (hasLoaded || isLoading) return;
 
         setIsLoading(true);
@@ -57,14 +57,14 @@ const TopicPopover: React.FC<TopicPopoverProps> = ({ children, favoriteTopics = 
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [hasLoaded, isLoading, topicId]);
 
-    const handleOpenChange = (open: boolean) => {
+    const handleOpenChange = useCallback((open: boolean) => {
         setIsOpen(open);
         if (open && !hasLoaded) {
             loadTopicDetail();
         }
-    };
+    }, [hasLoaded, loadTopicDetail]);
 
     const open = useCallback(() => handleOpenChange(true), [handleOpenChange]);
 

@@ -74,10 +74,18 @@ export class EmbeddingService {
                 );
             }
 
-            // 校验向量维度
+            // 校验向量维度和值域
             for (let i = 0; i < embeddings.length; i++) {
                 if (embeddings[i].length !== this.dimension) {
                     throw new Error(`向量维度不匹配：期望 ${this.dimension}，实际 ${embeddings[i].length}`);
+                }
+
+                for (let j = 0; j < embeddings[i].length; j++) {
+                    const value = embeddings[i][j];
+
+                    if (!Number.isFinite(value)) {
+                        throw new Error(`嵌入向量包含非法数值：index=${i}, dimension=${j}`);
+                    }
                 }
             }
 

@@ -15,6 +15,16 @@ interface SearchInputBarProps {
 }
 
 export default function SearchInputBar({ searchQuery, searchLimit, searchLoading, onSearchQueryChange, onSearchLimitChange, onSearch }: SearchInputBarProps) {
+    const handleLimitChange = (value: string) => {
+        const parsed = Number.parseInt(value, 10);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
+        onSearchLimitChange(Math.min(50, Math.max(1, parsed)));
+    };
+
     return (
         <form
             className={cn("relative w-full rounded-medium bg-default-100", "flex flex-col items-start", "transition-border border-2 border-default-300 focus-within:border-primary")}
@@ -48,7 +58,7 @@ export default function SearchInputBar({ searchQuery, searchLimit, searchLoading
                         type="number"
                         value={searchLimit.toString()}
                         variant="bordered"
-                        onChange={e => onSearchLimitChange(parseInt(e.target.value) || 10)}
+                        onValueChange={handleLimitChange}
                     />
                 </div>
 

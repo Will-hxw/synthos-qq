@@ -57,7 +57,7 @@ export const SessionItem: React.FC<SessionItemProps> = ({
         } else if (days < 7) {
             return `${days}天前`;
         } else {
-            return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+            return date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
         }
     };
 

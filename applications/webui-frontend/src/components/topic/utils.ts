@@ -28,10 +28,10 @@ const generateColorFromName = (name: string, isBackground: boolean = true): stri
 
 // 根据兴趣得分生成颜色
 const generateColorFromInterestScore = (interestScore: number, shouldContainAlpha: boolean = true): string => {
-    interestScore *= 4; // 放大，让效果更明显
+    const normalizedScore = Math.max(-1, Math.min(1, interestScore * 4));
 
     // 将 score 映射到 [0, 120] 的 hue 值：-1 → 0°（红），0 → 60°（黄），1 → 120°（绿）
-    const hue = 60 + 60 * interestScore; // score ∈ [-1, 1] → hue ∈ [0, 120]
+    const hue = 60 + 60 * normalizedScore; // score ∈ [-1, 1] → hue ∈ [0, 120]
 
     if (!shouldContainAlpha) {
         return `hsl(${hue}, 90%, 40%)`;

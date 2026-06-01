@@ -28,6 +28,25 @@ function isAbortError(error: unknown): boolean {
     return typeof error === "object" && error !== null && "name" in error && (error as { name?: string }).name === "AbortError";
 }
 
+const MAX_TOOL_TRACE_COUNT = 20;
+const MAX_TOOL_TRACE_TEXT_LENGTH = 4000;
+
+function stringifyToolTraceValue(value: unknown): string {
+    let text: string;
+
+    try {
+        text = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+        text = String(value);
+    }
+
+    if (text.length <= MAX_TOOL_TRACE_TEXT_LENGTH) {
+        return text;
+    }
+
+    return `${text.slice(0, MAX_TOOL_TRACE_TEXT_LENGTH)}\n...内容过长，已截断`;
+}
+
 /**
  * Agent 消息项组件
  */
@@ -171,7 +190,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, scrollToBottom]);
+    }, [messages.length, scrollToBottom]);
 
     // 把缓冲的 token 一次性合并进待回答的助手消息，并清空缓冲与 RAF 句柄
     const flushTokenBuffer = useCallback(() => {
@@ -192,7 +211,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
         }
 
         setMessages(prev => prev.map(m => (m.id === assistantId ? { ...m, content: (m.content || "") + buffered } : m)));
-    }, []);
+        requestAnimationFrame(() => scrollToBottom());
+    }, [scrollToBottom]);
 
     // 卸载时取消挂起的 RAF，避免回调在已卸载组件上 setState
     useEffect(() => {
@@ -385,7 +405,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                             return prev;
                         }
 
-                        return [
+                        const next = [
                             ...prev,
                             {
                                 toolCallId: evt.toolCallId,
@@ -394,6 +414,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                 startedAt: evt.ts
                             }
                         ];
+
+                        return next.slice(-MAX_TOOL_TRACE_COUNT);
                     });
 
                     return;
@@ -473,6 +495,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                             return m;
                         })
                     );
+                    requestAnimationFrame(() => scrollToBottom());
 
                     setLoading(false);
                     abortRef.current = null;
@@ -610,7 +633,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                                     <div className="mt-2">
                                                         <div className="text-xs text-default-500 mb-1">args</div>
                                                         <pre className="text-xs whitespace-pre-wrap break-words bg-default-100 rounded-md p-2 overflow-x-auto">
-                                                            {JSON.stringify(t.toolArgs, null, 2)}
+                                                            {stringifyToolTraceValue(t.toolArgs)}
                                                         </pre>
                                                     </div>
 
@@ -618,7 +641,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                                         <div className="mt-2">
                                                             <div className="text-xs text-default-500 mb-1">result</div>
                                                             <pre className="text-xs whitespace-pre-wrap break-words bg-default-100 rounded-md p-2 overflow-x-auto">
-                                                                {JSON.stringify(t.result, null, 2)}
+                                                                {stringifyToolTraceValue(t.result)}
                                                             </pre>
                                                         </div>
                                                     )}

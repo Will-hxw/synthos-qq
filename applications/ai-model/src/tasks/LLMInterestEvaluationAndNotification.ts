@@ -127,24 +127,23 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
                             config.ai.defaultModelName
                         );
 
-                        // 记录评估结果到 KV Store
-                        for (let j = 0; j < batch.length; j++) {
-                            const topicId = batch[j].topicId;
+                        await Promise.all(
+                            batch.map(async (topic, j) => {
+                                try {
+                                    await evaluationKVStore.put(topic.topicId, true);
+                                } catch (error) {
+                                    this.LOGGER.error(
+                                        `写入评估结果到 KV Store 失败: topicId=${topic.topicId}, error=${error}`
+                                    );
+                                    throw error;
+                                }
 
-                            try {
-                                await evaluationKVStore.put(topicId, true);
-                            } catch (error) {
-                                this.LOGGER.error(
-                                    `写入评估结果到 KV Store 失败: topicId=${topicId}, error=${error}`
-                                );
-                                throw error;
-                            }
-
-                            // 筛选出感兴趣的话题
-                            if (evaluationResults[j]) {
-                                interestedTopics.push(batch[j]);
-                            }
-                        }
+                                // 筛选出感兴趣的话题
+                                if (evaluationResults[j]) {
+                                    interestedTopics.push(topic);
+                                }
+                            })
+                        );
 
                         await job.touch(); // 保证任务存活
                     }
@@ -170,31 +169,35 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
                             this.LOGGER.success("邮件通知发送成功");
 
                             // 标记这些话题已发送邮件
-                            for (const topic of unnotifiedTopics) {
-                                try {
-                                    await notificationKVStore.put(topic.topicId, true);
-                                } catch (error) {
-                                    this.LOGGER.error(
-                                        `写入通知记录到 KV Store 失败: topicId=${topic.topicId}, error=${error}`
-                                    );
-                                    throw error;
-                                }
-                            }
+                            await Promise.all(
+                                unnotifiedTopics.map(async topic => {
+                                    try {
+                                        await notificationKVStore.put(topic.topicId, true);
+                                    } catch (error) {
+                                        this.LOGGER.error(
+                                            `写入通知记录到 KV Store 失败: topicId=${topic.topicId}, error=${error}`
+                                        );
+                                        throw error;
+                                    }
+                                })
+                            );
                         } else if (emailSendResult === "failed") {
                             this.LOGGER.warning("邮件通知发送失败");
 
                             // 评估标记已在评估阶段写入，若不回滚，这些感兴趣话题下轮会被
                             // “已评估”过滤掉、不再进入 interestedTopics，导致邮件失败后永久漏通知。
                             // 回滚本批待通知话题的评估标记，使其下轮重新评估并重试通知。
-                            for (const topic of unnotifiedTopics) {
-                                try {
-                                    await evaluationKVStore.del(topic.topicId);
-                                } catch (error) {
-                                    this.LOGGER.error(
-                                        `回滚评估标记失败: topicId=${topic.topicId}, error=${error}`
-                                    );
-                                }
-                            }
+                            await Promise.all(
+                                unnotifiedTopics.map(async topic => {
+                                    try {
+                                        await evaluationKVStore.del(topic.topicId);
+                                    } catch (error) {
+                                        this.LOGGER.error(
+                                            `回滚评估标记失败: topicId=${topic.topicId}, error=${error}`
+                                        );
+                                    }
+                                })
+                            );
                         } else {
                             this.LOGGER.info("邮件通知已跳过");
                         }
@@ -225,22 +228,20 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
         topics: AIDigestResult[],
         kvStore: KVStore<boolean>
     ): Promise<AIDigestResult[]> {
-        const unevaluatedTopics: AIDigestResult[] = [];
+        const entries = await Promise.all(
+            topics.map(async topic => {
+                try {
+                    const evaluated = await kvStore.get(topic.topicId);
 
-        for (const topic of topics) {
-            try {
-                const evaluated = await kvStore.get(topic.topicId);
-
-                if (!evaluated) {
-                    unevaluatedTopics.push(topic);
+                    return { topic, evaluated };
+                } catch (error) {
+                    this.LOGGER.error(`从 KV Store 读取评估状态失败: topicId=${topic.topicId}, error=${error}`);
+                    throw error;
                 }
-            } catch (error) {
-                this.LOGGER.error(`从 KV Store 读取评估状态失败: topicId=${topic.topicId}, error=${error}`);
-                throw error;
-            }
-        }
+            })
+        );
 
-        return unevaluatedTopics;
+        return entries.filter(entry => !entry.evaluated).map(entry => entry.topic);
     }
 
     /**
@@ -253,22 +254,20 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
         topics: AIDigestResult[],
         kvStore: KVStore<boolean>
     ): Promise<AIDigestResult[]> {
-        const unnotifiedTopics: AIDigestResult[] = [];
+        const entries = await Promise.all(
+            topics.map(async topic => {
+                try {
+                    const notified = await kvStore.get(topic.topicId);
 
-        for (const topic of topics) {
-            try {
-                const notified = await kvStore.get(topic.topicId);
-
-                if (!notified) {
-                    unnotifiedTopics.push(topic);
+                    return { topic, notified };
+                } catch (error) {
+                    this.LOGGER.error(`从 KV Store 读取通知状态失败: topicId=${topic.topicId}, error=${error}`);
+                    throw error;
                 }
-            } catch (error) {
-                this.LOGGER.error(`从 KV Store 读取通知状态失败: topicId=${topic.topicId}, error=${error}`);
-                throw error;
-            }
-        }
+            })
+        );
 
-        return unnotifiedTopics;
+        return entries.filter(entry => !entry.notified).map(entry => entry.topic);
     }
 
     /**

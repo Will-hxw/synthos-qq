@@ -254,9 +254,8 @@ export class ImDbAccessService extends Disposable {
             return null;
         }
 
-        // 从所有有效结果中取全局 min 和 max
-        const timeStart = Math.min(...validResults.map(r => r.timeStart!));
-        const timeEnd = Math.max(...validResults.map(r => r.timeEnd!));
+        const timeStart = validResults[0].timeStart!;
+        const timeEnd = validResults[0].timeEnd!;
 
         return { timeStart, timeEnd };
     }

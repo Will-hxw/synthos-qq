@@ -342,7 +342,7 @@ export default function GroupsPage() {
                                                     <img
                                                         alt="群头像"
                                                         className="w-10 h-10 rounded-full"
-                                                        src={`http://p.qlogo.cn/gh/${groupId}/${groupId}/0`}
+                                                        src={`https://p.qlogo.cn/gh/${groupId}/${groupId}/0`}
                                                         onError={e => {
                                                             const target = e.target as HTMLImageElement;
 

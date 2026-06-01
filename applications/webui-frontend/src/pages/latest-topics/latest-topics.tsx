@@ -369,8 +369,6 @@ export default function LatestTopicsPage() {
             });
 
             if (filterRead) {
-                setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
-                setTotalTopics(prev => Math.max(0, prev - 1));
                 await fetchLatestTopics({ silent: true });
             }
         } catch (error) {
@@ -407,8 +405,6 @@ export default function LatestTopicsPage() {
                 });
 
                 if (filterFavorite) {
-                    setTopics(prev => prev.filter(topic => topic.topicId !== topicId));
-                    setTotalTopics(prev => Math.max(0, prev - 1));
                     await fetchLatestTopics({ silent: true });
                 }
             } else {
