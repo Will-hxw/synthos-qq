@@ -12,6 +12,18 @@ import { COMMON_TOKENS } from "@root/common/di/tokens";
 
 import { JsonPromptStore } from "../../../context/prompts/JsonPromptStore";
 
+class JsonRepairFailureError extends Error {
+    public constructor(
+        public readonly originalParseError: unknown,
+        public readonly repairError: unknown,
+        public readonly invalidJson: string,
+        public readonly repairedResultStr: string
+    ) {
+        super("JSON 修复失败");
+        this.name = "JsonRepairFailureError";
+    }
+}
+
 /**
  * 文本生成器
  * 提供基于 LLM 的文本生成能力，支持多模型候选和重试机制
@@ -315,6 +327,20 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 格式化日志预览，避免模型输出中的换行把单条日志切碎。
+     * @param content 需要预览的内容
+     * @param maxLength 最大字符数
+     * @returns 单行预览文本
+     */
+    private _formatPreview(content: string, maxLength: number): string {
+        return content
+            .replaceAll("\r\n", "\\n")
+            .replaceAll("\r", "\\n")
+            .replaceAll("\n", "\\n")
+            .slice(0, maxLength);
+    }
+
+    /**
      * 尝试用同一模型修复非法 JSON 输出
      * @param modelName 模型名称
      * @param invalidJson 原始非法 JSON
@@ -325,9 +351,19 @@ export class TextGeneratorService extends Disposable {
         const prompt = (
             await JsonPromptStore.getJsonRepairPrompt(invalidJson, this._formatUnknownError(parseError))
         ).serializeToString();
-        const repairedResultStr = await this.doGenerateTextStream(modelName, prompt);
+        let repairedResultStr = "";
 
-        return this._validateJsonResult(repairedResultStr);
+        try {
+            repairedResultStr = await this.doGenerateTextStream(modelName, prompt);
+
+            if (this._isProviderRejection(repairedResultStr)) {
+                throw new Error("JSON 修复请求被上游网关/风控拒绝");
+            }
+
+            return this._validateJsonResult(repairedResultStr);
+        } catch (error) {
+            throw new JsonRepairFailureError(parseError, error, invalidJson, repairedResultStr);
+        }
     }
 
     /**
@@ -370,7 +406,7 @@ export class TextGeneratorService extends Disposable {
                     // 风控/网关拒绝：不可通过重试解决，立即切换到下一个模型
                     if (checkJsonFormat && this._isProviderRejection(rawOutput)) {
                         this.LOGGER.info(
-                            `模型 ${modelName} 被上游网关/风控拒绝（前200字符）：${rawOutput.slice(0, 200)}，切换到下一个模型`
+                            `模型 ${modelName} 被上游网关/风控拒绝（前200字符）：${this._formatPreview(rawOutput, 200)}，切换到下一个模型`
                         );
                         break;
                     }
@@ -383,7 +419,7 @@ export class TextGeneratorService extends Disposable {
                         } catch (parseError) {
                             if (!this._looksLikeJsonPayload(rawOutput)) {
                                 this.LOGGER.warning(
-                                    `模型 ${modelName} 返回非 JSON 内容（前200字符）：${rawOutput.slice(0, 200)}`
+                                    `模型 ${modelName} 返回非 JSON 内容（前200字符）：${this._formatPreview(rawOutput, 200)}`
                                 );
                                 throw parseError;
                             }
@@ -398,7 +434,9 @@ export class TextGeneratorService extends Disposable {
                     selectedModelName = modelName;
                     break;
                 } catch (error) {
-                    const rawPreview = rawOutput ? ` 原始输出前200字符: ${rawOutput.slice(0, 200)}` : "";
+                    const rawPreview = rawOutput
+                        ? ` 原始输出前200字符：${this._formatPreview(rawOutput, 200)}`
+                        : "";
 
                     if (this._isRateLimitError(error) && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
                         rateLimitRetries++;
@@ -407,6 +445,17 @@ export class TextGeneratorService extends Disposable {
                         );
                         await sleep(10000);
                         continue;
+                    }
+
+                    if (error instanceof JsonRepairFailureError) {
+                        const repairedPreview = error.repairedResultStr
+                            ? ` 修复输出前200字符：${this._formatPreview(error.repairedResultStr, 200)}`
+                            : " 修复输出为空或未返回";
+
+                        this.LOGGER.warning(
+                            `模型 ${modelName} JSON 修复失败，原始校验错误为：${this._formatUnknownError(error.originalParseError)}，修复错误为：${this._formatUnknownError(error.repairError)}，尝试下一个模型。 原始输出前200字符：${this._formatPreview(error.invalidJson, 200)}${repairedPreview}`
+                        );
+                        break;
                     }
 
                     this.LOGGER.warning(

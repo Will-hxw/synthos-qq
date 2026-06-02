@@ -56,6 +56,21 @@ describe("TextGeneratorService", () => {
         });
     });
 
+    it("JSON 校验场景应接受合法空数组", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockResolvedValue("[]");
+
+        const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "mock-model",
+            content: "[]"
+        });
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warning).not.toHaveBeenCalledWith(expect.stringContaining("尝试修复 JSON"));
+    });
+
     it("JSON 校验场景下合法但非数组的对象应触发修复（{} / {error}）", async () => {
         const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
 
@@ -208,6 +223,37 @@ describe("TextGeneratorService", () => {
             content: '[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]'
         });
         expect(doGenerateTextStream).toHaveBeenCalledTimes(3);
+    });
+
+    it("JSON 修复失败日志应区分原始校验错误和修复错误", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce('[{"topic":"AI讨论","detail":"输出被截断"')
+            .mockResolvedValueOnce("The request was rejected because it was considered high risk")
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '[{"topic":"ok"}]'
+        });
+
+        const repairLog = mockLogger.warning.mock.calls
+            .map(call => String(call[0]))
+            .find(message => message.includes("JSON 修复失败"));
+
+        expect(repairLog).toBeDefined();
+        expect(repairLog!).toContain("原始校验错误为");
+        expect(repairLog!).toContain("修复错误为：Error: JSON 修复请求被上游网关/风控拒绝");
+        expect(repairLog!).toContain('原始输出前200字符：[{"topic":"AI讨论","detail":"输出被截断"');
+        expect(repairLog!).toContain("修复输出前200字符：The request was rejected because it was considered high risk");
+        expect(repairLog!).not.toContain("\n");
     });
 
     it("网关风控拒绝(high risk)应跳过 JSON 修复并直接换下一个模型", async () => {
