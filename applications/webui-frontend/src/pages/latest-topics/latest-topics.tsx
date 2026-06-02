@@ -25,8 +25,9 @@ import ResponsivePopover from "@/components/ResponsivePopover";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 3;
-const DEFAULT_START_DATE = new CalendarDate(1970, 1, 1);
+const DEFAULT_RECENT_DAYS = 5;
 
+const getDefaultStartDate = () => today(getLocalTimeZone()).add({ days: -(DEFAULT_RECENT_DAYS - 1) });
 const getDefaultEndDate = () => today(getLocalTimeZone());
 
 const normalizeUnixMsTimestamp = (date: Date): number => Math.max(MIN_UNIX_MS_TIMESTAMP, date.getTime());
@@ -84,7 +85,7 @@ export default function LatestTopicsPage() {
 
     // 默认时间范围
     const [dateRange, setDateRange] = useState({
-        start: DEFAULT_START_DATE,
+        start: getDefaultStartDate(),
         end: getDefaultEndDate()
     });
 
@@ -232,7 +233,7 @@ export default function LatestTopicsPage() {
         }
 
         // 时间范围：格式化为 YYYY-MM-DD
-        const defaultStart = DEFAULT_START_DATE;
+        const defaultStart = getDefaultStartDate();
         const defaultEnd = getDefaultEndDate();
 
         // 只有当时间范围不是默认值时才写入URL
