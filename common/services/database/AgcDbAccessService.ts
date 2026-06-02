@@ -157,7 +157,7 @@ export class AgcDbAccessService extends Disposable {
         const offset = (query.page - 1) * query.pageSize;
         const orderBySql = query.sortByInterest
             ? "CASE WHEN interestScore IS NULL THEN 1 ELSE 0 END ASC, interestScore DESC, timeEnd DESC, updateTime DESC, topicId ASC"
-            : "timeEnd DESC, updateTime DESC, topicId ASC";
+            : "timeEnd DESC, topicId ASC";
         const records = await this.db.all<LatestTopicRecord>(
             `${cteSql}
             SELECT * FROM filtered_records

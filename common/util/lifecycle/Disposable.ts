@@ -204,7 +204,15 @@ class Disposable implements IDisposable {
     }
 }
 
-Disposable.enableGlobalSignalHandling();
+const isTestRuntime =
+    process.env.NODE_ENV === "test" ||
+    process.env.VITEST === "true" ||
+    process.env.VITEST_WORKER_ID !== undefined ||
+    process.env.VITEST_POOL_ID !== undefined;
+
+if (!isTestRuntime) {
+    Disposable.enableGlobalSignalHandling();
+}
 
 export { Disposable };
 export type { IDisposable };

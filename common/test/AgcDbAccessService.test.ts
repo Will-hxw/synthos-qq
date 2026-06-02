@@ -244,7 +244,7 @@ describe("AgcDbAccessService", () => {
         expect(runSqlList.some(sql => sql.includes("INSERT INTO ai_digest_sessions"))).toBe(true);
     });
 
-    it("非兴趣排序应按 timeEnd 与 updateTime 降序", async () => {
+    it("非兴趣排序应按 timeEnd 降序并用 topicId 稳定兜底", async () => {
         const service = new AgcDbAccessService();
 
         await service.init();
@@ -259,7 +259,7 @@ describe("AgcDbAccessService", () => {
 
         const pageSql = mockCommonDBService.all.mock.calls[0][0] as string;
 
-        expect(pageSql).toContain("ORDER BY timeEnd DESC, updateTime DESC, topicId ASC");
+        expect(pageSql).toContain("ORDER BY timeEnd DESC, topicId ASC");
     });
 
     it("commitSessionDigest 应在单事务内替换话题并写入 success 终态", async () => {

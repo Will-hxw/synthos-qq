@@ -750,7 +750,21 @@ export const mockGetLatestTopics = async (params: LatestTopicsRequest): Promise<
             }
         }
 
-        return b.timeEnd - a.timeEnd;
+        const timeEndOrder = b.timeEnd - a.timeEnd;
+
+        if (timeEndOrder !== 0) {
+            return timeEndOrder;
+        }
+
+        if (a.topicId < b.topicId) {
+            return -1;
+        }
+
+        if (a.topicId > b.topicId) {
+            return 1;
+        }
+
+        return 0;
     });
 
     const total = topics.length;
