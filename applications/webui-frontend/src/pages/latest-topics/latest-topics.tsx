@@ -41,6 +41,12 @@ const getApiDataOrThrow = <T,>(response: ApiResponse<T>, action: string): T => {
     return response.data;
 };
 
+const ensureApiSuccess = (response: { success: boolean; message?: string }, action: string): void => {
+    if (!response.success) {
+        throw new Error(`${action}失败：${response.message || "接口返回失败"}`);
+    }
+};
+
 const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error && error.message) {
         return error.message;
@@ -164,7 +170,7 @@ export default function LatestTopicsPage() {
                     if (urlPageSize) {
                         const pageSizeNum = parseInt(urlPageSize, 10);
 
-                        if ([3, 6, 9, 12].includes(pageSizeNum)) {
+                        if ([3, 6, 9, 12, 30].includes(pageSizeNum)) {
                             setTopicsPerPage(pageSizeNum);
                         }
                     }
@@ -361,7 +367,7 @@ export default function LatestTopicsPage() {
             }));
 
             // 使用新的API标记为已读
-            await markTopicAsRead(topicId);
+            ensureApiSuccess(await markTopicAsRead(topicId), "标记话题为已读");
 
             Notification.success({
                 title: "标记成功",
@@ -436,8 +442,11 @@ export default function LatestTopicsPage() {
 
         try {
             const promises = unreadTopics.map(topic => markTopicAsRead(topic.topicId));
+            const responses = await Promise.all(promises);
 
-            await Promise.all(promises);
+            responses.forEach(response => {
+                ensureApiSuccess(response, "标记话题为已读");
+            });
 
             const newReadTopics = { ...readTopics };
 
@@ -448,10 +457,17 @@ export default function LatestTopicsPage() {
 
             if (filterRead) {
                 const unreadTopicIds = new Set(unreadTopics.map(topic => topic.topicId));
+                const nextTotalTopics = Math.max(0, totalTopics - unreadTopics.length);
+                const nextTotalPages = Math.ceil(nextTotalTopics / topicsPerPage);
+                const nextPage = Math.max(1, Math.min(page, nextTotalPages || 1));
 
                 setTopics(prev => prev.filter(topic => !unreadTopicIds.has(topic.topicId)));
-                setTotalTopics(prev => Math.max(0, prev - unreadTopics.length));
-                await fetchLatestTopics({ silent: true });
+                setTotalTopics(nextTotalTopics);
+                if (nextPage !== page) {
+                    setPage(nextPage);
+                } else {
+                    await fetchLatestTopics({ silent: true });
+                }
             }
 
             Notification.success({
@@ -549,6 +565,7 @@ export default function LatestTopicsPage() {
                                         <SelectItem key="6">6</SelectItem>
                                         <SelectItem key="9">9</SelectItem>
                                         <SelectItem key="12">12</SelectItem>
+                                        <SelectItem key="30">30</SelectItem>
                                     </Select>
                                 </div>
 
