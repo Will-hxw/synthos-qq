@@ -23,7 +23,7 @@ import { Notification } from "@/util/Notification";
 import ResponsivePopover from "@/components/ResponsivePopover";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
-const DEFAULT_TOPICS_PER_PAGE = 3;
+const DEFAULT_TOPICS_PER_PAGE = 12;
 const DEFAULT_RECENT_DAYS = 5;
 
 const getDefaultStartDate = () => today(getLocalTimeZone()).add({ days: -(DEFAULT_RECENT_DAYS - 1) });
