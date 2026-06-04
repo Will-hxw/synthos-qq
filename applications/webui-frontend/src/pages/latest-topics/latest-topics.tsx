@@ -8,7 +8,6 @@ import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Pagination } from "@heroui/pagination";
 import { Spinner } from "@heroui/spinner";
-import { ScrollShadow } from "@heroui/scroll-shadow";
 import { DateRangePicker, Tooltip, Input, Checkbox, Select, SelectItem } from "@heroui/react";
 import { Check, Search } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
@@ -430,6 +429,44 @@ export default function LatestTopicsPage() {
         }
     };
 
+    const hasUnreadTopicOnCurrentPage = currentPageTopics.some(topic => !readTopics[topic.topicId]);
+
+    const markCurrentPageAsRead = async () => {
+        const unreadTopics = currentPageTopics.filter(topic => !readTopics[topic.topicId]);
+
+        try {
+            const promises = unreadTopics.map(topic => markTopicAsRead(topic.topicId));
+
+            await Promise.all(promises);
+
+            const newReadTopics = { ...readTopics };
+
+            unreadTopics.forEach(topic => {
+                newReadTopics[topic.topicId] = true;
+            });
+            setReadTopics(newReadTopics);
+
+            if (filterRead) {
+                const unreadTopicIds = new Set(unreadTopics.map(topic => topic.topicId));
+
+                setTopics(prev => prev.filter(topic => !unreadTopicIds.has(topic.topicId)));
+                setTotalTopics(prev => Math.max(0, prev - unreadTopics.length));
+                await fetchLatestTopics({ silent: true });
+            }
+
+            Notification.success({
+                title: "批量标记成功",
+                description: `已将 ${unreadTopics.length} 个话题标记为已读`
+            });
+        } catch (error) {
+            console.error("批量标记话题为已读失败:", error);
+            Notification.error({
+                title: "批量标记失败",
+                description: "无法标记所有话题为已读"
+            });
+        }
+    };
+
     return (
         <DefaultLayout>
             <section className="flex flex-col gap-4 py-0 md:py-10">
@@ -576,33 +613,38 @@ export default function LatestTopicsPage() {
                         </ResponsivePopover>
                     </CardHeader>
 
-                    <CardBody className="relative">
+                    <CardBody>
                         {loading ? (
                             <div className="flex justify-center items-center h-64">
                                 <Spinner size="lg" />
                             </div>
                         ) : currentPageTopics.length > 0 ? (
                             <div className="flex flex-col gap-4">
-                                <ScrollShadow className="max-h-[calc(100vh-220px)]">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-0 md:p-5">
-                                        {currentPageTopics.map((topic, index) => (
-                                            <TopicCard
-                                                key={`${topic.topicId}-${index}`}
-                                                favoriteTopics={favoriteTopics}
-                                                index={(page - 1) * topicsPerPage + index + 1}
-                                                interestScore={interestScores[topic.topicId]}
-                                                readTopics={readTopics}
-                                                topic={topic}
-                                                onMarkAsRead={markAsRead}
-                                                onToggleFavorite={toggleFavorite}
-                                            />
-                                        ))}
-                                    </div>
-                                </ScrollShadow>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-0 md:p-5">
+                                    {currentPageTopics.map((topic, index) => (
+                                        <TopicCard
+                                            key={`${topic.topicId}-${index}`}
+                                            favoriteTopics={favoriteTopics}
+                                            index={(page - 1) * topicsPerPage + index + 1}
+                                            interestScore={interestScores[topic.topicId]}
+                                            readTopics={readTopics}
+                                            topic={topic}
+                                            onMarkAsRead={markAsRead}
+                                            onToggleFavorite={toggleFavorite}
+                                        />
+                                    ))}
+                                </div>
 
-                                {totalPages > 1 && (
-                                    <div className="flex justify-center mt-4">
-                                        <Pagination showControls color="primary" page={page} size="md" total={totalPages} onChange={setPage} />
+                                {(totalPages > 1 || hasUnreadTopicOnCurrentPage) && (
+                                    <div className="flex flex-col items-center gap-3 md:flex-row md:justify-center md:gap-4">
+                                        {totalPages > 1 && <Pagination showControls color="primary" page={page} size="md" total={totalPages} onChange={setPage} />}
+                                        {hasUnreadTopicOnCurrentPage && (
+                                            <Tooltip color="primary" content="将当前页面所有未读话题标记为已读" placement="top">
+                                                <Button color="primary" size="sm" startContent={<Check size={16} />} variant="flat" onPress={markCurrentPageAsRead}>
+                                                    整页已读
+                                                </Button>
+                                            </Tooltip>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -619,59 +661,6 @@ export default function LatestTopicsPage() {
                                 >
                                     重新加载
                                 </Button>
-                            </div>
-                        )}
-
-                        {/* 整页已读按钮 - 固定在右下角 */}
-                        {!loading && currentPageTopics.length > 0 && currentPageTopics.some(topic => !readTopics[topic.topicId]) && (
-                            <div className="absolute bottom-4 right-4 hidden md:block">
-                                <Tooltip color="primary" content="将当前页面所有未读话题标记为已读" placement="top">
-                                    <Button
-                                        color="primary"
-                                        size="sm"
-                                        startContent={<Check size={16} />}
-                                        variant="flat"
-                                        onPress={async () => {
-                                            const unreadTopics = currentPageTopics.filter(topic => !readTopics[topic.topicId]);
-
-                                            try {
-                                                // 批量标记为已读
-                                                const promises = unreadTopics.map(topic => markTopicAsRead(topic.topicId));
-
-                                                await Promise.all(promises);
-
-                                                // 更新本地状态
-                                                const newReadTopics = { ...readTopics };
-
-                                                unreadTopics.forEach(topic => {
-                                                    newReadTopics[topic.topicId] = true;
-                                                });
-                                                setReadTopics(newReadTopics);
-
-                                                if (filterRead) {
-                                                    const unreadTopicIds = new Set(unreadTopics.map(topic => topic.topicId));
-
-                                                    setTopics(prev => prev.filter(topic => !unreadTopicIds.has(topic.topicId)));
-                                                    setTotalTopics(prev => Math.max(0, prev - unreadTopics.length));
-                                                    await fetchLatestTopics({ silent: true });
-                                                }
-
-                                                Notification.success({
-                                                    title: "批量标记成功",
-                                                    description: `已将 ${unreadTopics.length} 个话题标记为已读`
-                                                });
-                                            } catch (error) {
-                                                console.error("Failed to mark all topics as read:", error);
-                                                Notification.error({
-                                                    title: "批量标记失败",
-                                                    description: "无法标记所有话题为已读"
-                                                });
-                                            }
-                                        }}
-                                    >
-                                        整页已读
-                                    </Button>
-                                </Tooltip>
                             </div>
                         )}
                     </CardBody>
