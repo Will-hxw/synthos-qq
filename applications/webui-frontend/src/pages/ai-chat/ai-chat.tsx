@@ -5,18 +5,15 @@
  */
 import type { AiChatTab } from "@/types/agent";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button } from "@heroui/react";
+import { Button, Spinner } from "@heroui/react";
 import { Menu } from "lucide-react";
 import { useTheme } from "@heroui/use-theme";
 
 import ChatHistorySidebar from "./components/ChatHistorySidebar/ChatHistorySidebar";
-import { AgentChat } from "./components/AgentChat";
 import EmptyState from "./components/EmptyState";
 import ScrollFloatButtons from "./components/ScrollFloatButtons";
-import AskPanel from "./components/panels/AskPanel";
-import SearchPanel from "./components/panels/SearchPanel";
 import AskInputBar from "./components/inputs/AskInputBar";
 import SearchInputBar from "./components/inputs/SearchInputBar";
 import { useAskState } from "./components/hooks/useAskState";
@@ -27,6 +24,10 @@ import { useTopicStatus } from "./components/hooks/useTopicStatus";
 import { DEFAULT_ACTIVE_TAB, DEFAULT_TOP_K, DEFAULT_ENABLE_QUERY_REWRITER, DEFAULT_SEARCH_LIMIT, DEFAULT_SIDEBAR_COLLAPSED } from "./constants/constants";
 
 import DefaultLayout from "@/layouts/default";
+
+const AgentChat = lazy(() => import("./components/AgentChat").then(module => ({ default: module.AgentChat })));
+const AskPanel = lazy(() => import("./components/panels/AskPanel"));
+const SearchPanel = lazy(() => import("./components/panels/SearchPanel"));
 
 const isAiChatTab = (value: string | null): value is AiChatTab => value === "ask" || value === "search" || value === "agent";
 
@@ -39,6 +40,12 @@ const getTabFromSearchParams = (params: URLSearchParams): AiChatTab => {
 
     return DEFAULT_ACTIVE_TAB as AiChatTab;
 };
+
+const panelFallback = (
+    <div className="flex h-full min-h-[240px] items-center justify-center">
+        <Spinner color="primary" size="sm" />
+    </div>
+);
 
 export default function AiChatPage() {
     const { theme } = useTheme();
@@ -275,18 +282,20 @@ export default function AiChatPage() {
         if (activeTab === "ask") {
             if (askResponse) {
                 return (
-                    <AskPanel
-                        answerCardRef={answerCardRef}
-                        askLoading={askLoading}
-                        askResponse={askResponse}
-                        currentSessionFailReason={currentSessionFailReason}
-                        currentSessionIsFailed={currentSessionIsFailed}
-                        favoriteTopics={favoriteTopics}
-                        readTopics={readTopics}
-                        theme={theme}
-                        onMarkAsRead={markAsRead}
-                        onToggleFavorite={toggleFavorite}
-                    />
+                    <Suspense fallback={panelFallback}>
+                        <AskPanel
+                            answerCardRef={answerCardRef}
+                            askLoading={askLoading}
+                            askResponse={askResponse}
+                            currentSessionFailReason={currentSessionFailReason}
+                            currentSessionIsFailed={currentSessionIsFailed}
+                            favoriteTopics={favoriteTopics}
+                            readTopics={readTopics}
+                            theme={theme}
+                            onMarkAsRead={markAsRead}
+                            onToggleFavorite={toggleFavorite}
+                        />
+                    </Suspense>
                 );
             }
 
@@ -298,15 +307,17 @@ export default function AiChatPage() {
         }
 
         return (
-            <SearchPanel
-                favoriteTopics={favoriteTopics}
-                readTopics={readTopics}
-                searchLoading={searchLoading}
-                searchQuery={searchQuery}
-                searchResults={searchResults}
-                onMarkAsRead={markAsRead}
-                onToggleFavorite={toggleFavorite}
-            />
+            <Suspense fallback={panelFallback}>
+                <SearchPanel
+                    favoriteTopics={favoriteTopics}
+                    readTopics={readTopics}
+                    searchLoading={searchLoading}
+                    searchQuery={searchQuery}
+                    searchResults={searchResults}
+                    onMarkAsRead={markAsRead}
+                    onToggleFavorite={toggleFavorite}
+                />
+            </Suspense>
         );
     };
 
@@ -342,14 +353,16 @@ export default function AiChatPage() {
                 <div className="flex-1 flex flex-col overflow-hidden">
                     {/* Agent 模式使用独立渲染 */}
                     {activeTab === "agent" ? (
-                        <AgentChat
-                            conversationId={selectedAgentConversationId}
-                            sessionId={selectedSessionId || undefined}
-                            onConversationIdChange={cid => {
-                                setSelectedAgentConversationId(cid);
-                                setAgentRefreshTrigger(prev => prev + 1);
-                            }}
-                        />
+                        <Suspense fallback={panelFallback}>
+                            <AgentChat
+                                conversationId={selectedAgentConversationId}
+                                sessionId={selectedSessionId || undefined}
+                                onConversationIdChange={cid => {
+                                    setSelectedAgentConversationId(cid);
+                                    setAgentRefreshTrigger(prev => prev + 1);
+                                }}
+                            />
+                        </Suspense>
                     ) : (
                         <>
                             {/* 消息显示区 */}

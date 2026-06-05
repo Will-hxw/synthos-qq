@@ -7,7 +7,6 @@ import type { AskResponse } from "@/api/ragApi";
 import { Button } from "@heroui/react";
 import { Spinner } from "@heroui/spinner";
 import { Download } from "lucide-react";
-import domtoimage from "dom-to-image";
 import { motion } from "framer-motion";
 
 import ReferenceList from "@/components/topic-reference/ReferenceList";
@@ -45,6 +44,7 @@ export default function AskPanel({
         }
 
         try {
+            const { default: domtoimage } = await import("dom-to-image");
             const dataUrl = await domtoimage.toPng(answerCardRef.current, {
                 quality: 1.0,
                 bgcolor: theme === "dark" ? "#1e1e1e" : "#ffffff",

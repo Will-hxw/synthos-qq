@@ -89,7 +89,7 @@ function buildConcurrentlyArgs(group) {
                 "pnpm --filter ai-model dev",
                 "pnpm --filter data-provider dev",
                 "pnpm --filter webui-backend dev",
-                "pnpm --filter vite-template build && pnpm --filter vite-template preview:public",
+                "pnpm --filter vite-template build && node scripts/startPublicPreviewServer.cjs",
                 "node scripts/runWithEnv.cjs SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT=3012 -- node scripts/startPublicTunnel.cjs"
             ]
         };

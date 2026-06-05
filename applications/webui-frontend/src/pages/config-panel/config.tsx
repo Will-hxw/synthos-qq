@@ -6,11 +6,10 @@
 import type { JsonSchema } from "@/api/configApi";
 import type { SectionConfig, SearchContext, ValidationError } from "./types/index";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@heroui/button";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/react";
 import { useTheme } from "@heroui/use-theme";
-import { DiffEditor } from "@monaco-editor/react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Spinner } from "@heroui/spinner";
 import { Chip } from "@heroui/chip";
@@ -24,6 +23,8 @@ import { getConfigSchema, getCurrentConfig, saveBaseConfig, validateConfig } fro
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
+
+const DiffEditor = lazy(() => import("@monaco-editor/react").then(module => ({ default: module.DiffEditor })));
 
 /**
  * 将后端返回的校验错误归一化为 { path, message } 结构。
@@ -620,23 +621,31 @@ export default function ConfigPage() {
                             </ModalHeader>
                             <ModalBody>
                                 <div className="h-[60vh] border border-default-200 rounded-md overflow-hidden">
-                                    <DiffEditor
-                                        height="100%"
-                                        language="json"
-                                        modified={newConfigForDiff}
-                                        options={{
-                                            minimap: { enabled: false },
-                                            scrollBeyondLastLine: false,
-                                            renderSideBySide: true,
-                                            readOnly: true,
-                                            diffCodeLens: true,
-                                            hideUnchangedRegions: {
-                                                enabled: showOnlyChanges
-                                            }
-                                        }}
-                                        original={baseConfigForDiff}
-                                        theme={theme === "dark" ? "vs-dark" : "vs"}
-                                    />
+                                    <Suspense
+                                        fallback={
+                                            <div className="flex h-full items-center justify-center">
+                                                <Spinner color="primary" size="sm" />
+                                            </div>
+                                        }
+                                    >
+                                        <DiffEditor
+                                            height="100%"
+                                            language="json"
+                                            modified={newConfigForDiff}
+                                            options={{
+                                                minimap: { enabled: false },
+                                                scrollBeyondLastLine: false,
+                                                renderSideBySide: true,
+                                                readOnly: true,
+                                                diffCodeLens: true,
+                                                hideUnchangedRegions: {
+                                                    enabled: showOnlyChanges
+                                                }
+                                            }}
+                                            original={baseConfigForDiff}
+                                            theme={theme === "dark" ? "vs-dark" : "vs"}
+                                        />
+                                    </Suspense>
                                 </div>
                             </ModalBody>
                             <ModalFooter>

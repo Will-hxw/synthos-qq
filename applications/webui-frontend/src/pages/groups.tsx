@@ -1,6 +1,6 @@
 import type { GroupDetailsRecord, GroupListItem, MessageHourlyStatsData } from "@/types/index";
 
-import { useState, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, SortDescriptor } from "@heroui/table";
@@ -12,12 +12,13 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 import { getGroupDetails, getMessageHourlyStats } from "@/api/basicApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import MessageTrendChart from "@/components/MessageTrendChart";
 
 interface HourlyTrend {
     current: number[];
     previous: number[];
 }
+
+const MessageTrendChart = lazy(() => import("@/components/MessageTrendChart"));
 
 export default function GroupsPage() {
     const [groups, setGroups] = useState<GroupDetailsRecord>({});
@@ -26,7 +27,12 @@ export default function GroupsPage() {
     const [totalRecentMessageCount, setTotalRecentMessageCount] = useState<number>(0);
     const [totalPreviousMessageCount, setTotalPreviousMessageCount] = useState<number>(0);
     const [, setHourlyStats] = useState<MessageHourlyStatsData | null>(null);
-    const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [isGroupsLoading, setIsGroupsLoading] = useState<boolean>(false);
+    const [isStatsLoading, setIsStatsLoading] = useState<boolean>(false);
+    const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+    const [hasStatsData, setHasStatsData] = useState<boolean>(false);
+    const [statsLoadFailed, setStatsLoadFailed] = useState<boolean>(false);
+    const statsRequestSeqRef = useRef<number>(0);
     const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor>({
         column: "messageCount",
         direction: "descending"
@@ -71,9 +77,39 @@ export default function GroupsPage() {
     };
 
     // 获取消息统计
+    const resetStatsState = () => {
+        setHourlyStats(null);
+        setRecentMessageCounts({});
+        setPreviousMessageCounts({});
+        setTotalRecentMessageCount(0);
+        setTotalPreviousMessageCount(0);
+        setGroupHourlyTrends({});
+        setTotalHourlyTrend({ current: [], previous: [] });
+        setChartTimestamps([]);
+        setHasStatsData(false);
+        setStatsLoadFailed(false);
+    };
+
     const fetchMessageHourlyStats = async (groupIds: string[]) => {
+        const requestId = statsRequestSeqRef.current + 1;
+
+        statsRequestSeqRef.current = requestId;
+        setIsStatsLoading(true);
+        setStatsLoadFailed(false);
+        setHasStatsData(false);
+
+        if (groupIds.length === 0) {
+            resetStatsState();
+            setIsStatsLoading(false);
+            return;
+        }
+
         try {
             const response = await getMessageHourlyStats(groupIds);
+
+            if (statsRequestSeqRef.current !== requestId) {
+                return;
+            }
 
             if (response.success) {
                 const statsData = response.data;
@@ -123,31 +159,44 @@ export default function GroupsPage() {
                 setChartTimestamps(statsData.timestamps.current);
                 setTotalHourlyTrend({ current: totalCurrentHourly, previous: totalPreviousHourly });
                 setGroupHourlyTrends(perGroupTrends);
+                setHasStatsData(true);
             } else {
+                setStatsLoadFailed(true);
                 console.error("获取消息统计失败:", response.message);
             }
         } catch (error) {
+            if (statsRequestSeqRef.current !== requestId) {
+                return;
+            }
+            setStatsLoadFailed(true);
             console.error("获取消息统计失败:", error);
+        }
+        if (statsRequestSeqRef.current === requestId) {
+            setIsStatsLoading(false);
         }
     };
 
     // 获取群组信息
     const fetchGroups = async () => {
-        setIsLoading(true);
+        const hasExistingGroups = Object.keys(groups).length > 0;
+
+        setIsGroupsLoading(!hasExistingGroups);
+        setIsRefreshing(hasExistingGroups);
         try {
             const response = await getGroupDetails();
 
             if (response.success) {
                 setGroups(response.data);
-                // 获取所有群组的每小时消息统计
-                await fetchMessageHourlyStats(Object.keys(response.data));
+                resetStatsState();
+                void fetchMessageHourlyStats(Object.keys(response.data));
             } else {
                 console.error("获取群组信息失败:", response.message);
             }
         } catch (error) {
             console.error("获取群组信息失败:", error);
         } finally {
-            setIsLoading(false);
+            setIsGroupsLoading(false);
+            setIsRefreshing(false);
         }
     };
 
@@ -261,6 +310,56 @@ export default function GroupsPage() {
         setSortDescriptor(descriptor);
     };
 
+    const renderCountValue = (value: number) => {
+        if (isStatsLoading) {
+            return <div aria-label="统计加载中" className="h-5 w-12 rounded bg-default-200 animate-pulse" />;
+        }
+
+        if (statsLoadFailed && !hasStatsData) {
+            return <span className="text-default-400">--</span>;
+        }
+
+        return <span className="font-semibold">{value}</span>;
+    };
+
+    const renderStatsChange = (currentCount: number, previousCount: number) => {
+        if (isStatsLoading) {
+            return <div aria-label="统计加载中" className="h-6 w-24 rounded-full bg-default-200 animate-pulse" />;
+        }
+
+        if (statsLoadFailed && !hasStatsData) {
+            return (
+                <Chip color="warning" size="sm" variant="flat">
+                    统计失败
+                </Chip>
+            );
+        }
+
+        return renderDayOverDayChange(currentCount, previousCount);
+    };
+
+    const chartFallback = <div aria-label="走势图加载中" className="h-[100px] w-[300px] rounded bg-default-100" />;
+
+    const renderTrendChart = (currentHourlyData: number[], previousHourlyData: number[]) => {
+        if (isStatsLoading) {
+            return <div aria-label="统计加载中" className="h-[100px] w-[300px] rounded bg-default-200 animate-pulse" />;
+        }
+
+        if (statsLoadFailed && !hasStatsData) {
+            return <div className="flex h-[100px] w-[300px] items-center justify-center rounded bg-default-100 text-xs text-default-400">统计加载失败</div>;
+        }
+
+        if (!hasStatsData) {
+            return <div className="h-[100px] w-[300px] rounded bg-default-100" />;
+        }
+
+        return (
+            <Suspense fallback={chartFallback}>
+                <MessageTrendChart currentHourlyData={currentHourlyData} previousHourlyData={previousHourlyData} timestamps={chartTimestamps} />
+            </Suspense>
+        );
+    };
+
     return (
         <DefaultLayout>
             <section className="flex flex-col gap-4 py-8 md:py-10">
@@ -273,13 +372,13 @@ export default function GroupsPage() {
                     <CardHeader>
                         <div className="flex justify-between items-center w-full p-3">
                             <h3 className="text-lg font-bold">群组列表 ({Object.entries(groups).length})</h3>
-                            <Button color="primary" isLoading={isLoading} size="sm" onPress={fetchGroups}>
-                                {isLoading ? <Spinner size="sm" /> : "刷新"}
+                            <Button color="primary" isLoading={isGroupsLoading || isRefreshing || isStatsLoading} size="sm" onPress={fetchGroups}>
+                                {isGroupsLoading || isRefreshing || isStatsLoading ? <Spinner size="sm" /> : "刷新"}
                             </Button>
                         </div>
                     </CardHeader>
                     <CardBody>
-                        {isLoading ? (
+                        {isGroupsLoading && Object.keys(groups).length === 0 ? (
                             <div className="flex justify-center items-center h-64">
                                 <Spinner size="lg" />
                             </div>
@@ -324,15 +423,15 @@ export default function GroupsPage() {
                                             <TableCell>-</TableCell>
                                             <TableCell>
                                                 <div className="flex flex-col gap-1">
-                                                    <span className="font-semibold">{totalRecentMessageCount}</span>
-                                                    {renderDayOverDayChange(totalRecentMessageCount, totalPreviousMessageCount)}
+                                                    {renderCountValue(totalRecentMessageCount)}
+                                                    {renderStatsChange(totalRecentMessageCount, totalPreviousMessageCount)}
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                <span className="font-semibold">{totalPreviousMessageCount}</span>
+                                                {renderCountValue(totalPreviousMessageCount)}
                                             </TableCell>
                                             <TableCell>
-                                                <MessageTrendChart currentHourlyData={totalHourlyTrend.current} previousHourlyData={totalHourlyTrend.previous} timestamps={chartTimestamps} />
+                                                {renderTrendChart(totalHourlyTrend.current, totalHourlyTrend.previous)}
                                             </TableCell>
                                         </TableRow>
                                         {/* 群组数据行 - 根据排序描述符排序 */}
@@ -342,7 +441,11 @@ export default function GroupsPage() {
                                                     <img
                                                         alt="群头像"
                                                         className="w-10 h-10 rounded-full"
+                                                        decoding="async"
+                                                        height={40}
+                                                        loading="lazy"
                                                         src={`https://p.qlogo.cn/gh/${groupId}/${groupId}/0`}
+                                                        width={40}
                                                         onError={e => {
                                                             const target = e.target as HTMLImageElement;
 
@@ -367,19 +470,15 @@ export default function GroupsPage() {
                                                 <TableCell>{getAIModelLabel(groupDetail.aiModel)}</TableCell>
                                                 <TableCell>
                                                     <div className="flex flex-col gap-1">
-                                                        <span className="font-semibold">{messageCount}</span>
-                                                        {renderDayOverDayChange(messageCount, previousMessageCount)}
+                                                        {renderCountValue(messageCount)}
+                                                        {renderStatsChange(messageCount, previousMessageCount)}
                                                     </div>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <span className="font-semibold">{previousMessageCount}</span>
+                                                    {renderCountValue(previousMessageCount)}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <MessageTrendChart
-                                                        currentHourlyData={groupHourlyTrends[groupId]?.current ?? []}
-                                                        previousHourlyData={groupHourlyTrends[groupId]?.previous ?? []}
-                                                        timestamps={chartTimestamps}
-                                                    />
+                                                    {renderTrendChart(groupHourlyTrends[groupId]?.current ?? [], groupHourlyTrends[groupId]?.previous ?? [])}
                                                 </TableCell>
                                             </TableRow>
                                         ))}

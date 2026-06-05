@@ -48,11 +48,7 @@ export default defineConfig({
                         return "vendor-monaco";
                     }
 
-                    if (normalizedId.includes("zrender")) {
-                        return "vendor-zrender";
-                    }
-
-                    if (normalizedId.includes("echarts")) {
+                    if (normalizedId.includes("echarts") || normalizedId.includes("zrender")) {
                         return "vendor-charts";
                     }
 

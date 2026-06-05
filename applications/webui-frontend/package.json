@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "lint": "eslint --fix",
     "preview": "vite preview",
-    "preview:public": "vite preview --host 127.0.0.1 --port 3012"
+    "preview:public": "node ../../scripts/startPublicPreviewServer.cjs"
   },
   "dependencies": {
     "@heroui/accordion": "^2.0.0",

@@ -1,6 +1,6 @@
 import type { TopicReferenceItem } from "@/types/topicReference";
 
-import { useState, useEffect, useCallback } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
@@ -12,7 +12,6 @@ import { FileText, RefreshCw, Plus } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 
 import ReportCard from "./components/ReportCard";
-import ReportDetailModal from "./components/ReportDetailModal";
 import { useTopicStatus } from "./hooks/useTopicStatus";
 
 import { getReportsPaginated, getReportsByDate, getReportById, triggerReportGenerate, markReportAsRead, getReportsReadStatus, sendReportEmail } from "@/api/reportApi";
@@ -21,6 +20,8 @@ import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
 import { Report, ReportType } from "@/types";
+
+const ReportDetailModal = lazy(() => import("./components/ReportDetailModal"));
 
 export default function ReportsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -628,21 +629,25 @@ export default function ReportsPage() {
             </section>
 
             {/* 日报详情弹窗 */}
-            <ReportDetailModal
-                emailEnabled={emailEnabled}
-                favoriteTopics={favoriteTopics}
-                isOpen={isModalOpen}
-                isSendingEmail={sendingEmailReportId === selectedReport?.reportId}
-                readReports={readReports}
-                readTopics={readTopics}
-                report={selectedReport}
-                topicReferences={selectedReferences}
-                onClose={closeReportDetail}
-                onMarkReportAsRead={handleMarkAsRead}
-                onMarkTopicAsRead={onMarkTopicAsRead}
-                onSendEmail={handleSendEmail}
-                onToggleTopicFavorite={onToggleTopicFavorite}
-            />
+            {isModalOpen && selectedReport && (
+                <Suspense fallback={null}>
+                    <ReportDetailModal
+                        emailEnabled={emailEnabled}
+                        favoriteTopics={favoriteTopics}
+                        isOpen={isModalOpen}
+                        isSendingEmail={sendingEmailReportId === selectedReport.reportId}
+                        readReports={readReports}
+                        readTopics={readTopics}
+                        report={selectedReport}
+                        topicReferences={selectedReferences}
+                        onClose={closeReportDetail}
+                        onMarkReportAsRead={handleMarkAsRead}
+                        onMarkTopicAsRead={onMarkTopicAsRead}
+                        onSendEmail={handleSendEmail}
+                        onToggleTopicFavorite={onToggleTopicFavorite}
+                    />
+                </Suspense>
+            )}
         </DefaultLayout>
     );
 }
