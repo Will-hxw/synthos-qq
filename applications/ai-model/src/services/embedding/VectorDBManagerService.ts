@@ -363,68 +363,11 @@ export class VectorDBManagerService extends Disposable {
     }
 
     /**
-     * 相似度搜索
+     * 基于 KNN 算法的高性能相似度搜索
      * @param queryEmbedding 查询向量
      * @param topicIdCandidates 候选 topicId 集合（用于预过滤，传空数组则搜索全部）
      * @param limit 返回数量
-     * @returns 按相似度排序的 { topicId, distance }[] 数组
-     */
-    public searchSimilar_Old(
-        queryEmbedding: Float32Array,
-        topicIdCandidates: string[],
-        limit: number
-    ): Array<{ topicId: string; distance: number }> {
-        if (queryEmbedding.length !== this.dimension) {
-            throw new Error(`查询向量维度不匹配：期望 ${this.dimension}，实际 ${queryEmbedding.length}`);
-        }
-
-        let sql: string;
-        let params: any[];
-
-        if (topicIdCandidates.length > 0) {
-            // 有候选集，先过滤再搜索
-            const placeholders = topicIdCandidates.map(() => "?").join(",");
-
-            sql = `
-                SELECT 
-                    m.topic_id,
-                    vec_distance_cosine(v.embedding, ?) as distance
-                FROM vec_topics v
-                JOIN topic_vector_mapping m ON v.rowid = m.vector_rowid
-                WHERE m.topic_id IN (${placeholders})
-                ORDER BY distance ASC
-                LIMIT ?
-            `;
-            params = [queryEmbedding, ...topicIdCandidates, limit];
-        } else {
-            // 无候选集，搜索全部
-            sql = `
-                SELECT 
-                    m.topic_id,
-                    vec_distance_cosine(v.embedding, ?) as distance
-                FROM vec_topics v
-                JOIN topic_vector_mapping m ON v.rowid = m.vector_rowid
-                ORDER BY distance ASC
-                LIMIT ?
-            `;
-            params = [queryEmbedding, limit];
-        }
-
-        const stmt = this.db!.prepare(sql);
-        const results = stmt.all(...params) as Array<{ topic_id: string; distance: number }>;
-
-        return results.map(row => ({
-            topicId: row.topic_id,
-            distance: row.distance
-        }));
-    }
-
-    /**
-     * 基于KNN算法的高性能相似度搜索
-     * @param queryEmbedding 查询向量
-     * @param topicIdCandidates 候选 topicId 集合（用于预过滤，传空数组则搜索全部）
-     * @param limit 返回数量
-     * @returns 按相似度排序的 { topicId, distance }[] 数组
+     * @returns 按 L2 距离升序排序的 { topicId, distance }[] 数组，distance 为 sqlite-vec MATCH 返回的 L2 距离
      */
     public searchSimilar(
         queryEmbedding: Float32Array,
@@ -453,7 +396,7 @@ export class VectorDBManagerService extends Disposable {
 
             const rowIdPlaceholders = candidateRowIds.map(() => "?").join(",");
 
-            // 使用 MATCH 语法进行 KNN 优化搜索
+            // 使用 MATCH 语法进行 KNN 优化搜索，v.distance 为 L2 距离
             sql = `
             SELECT 
                 m.topic_id,
@@ -467,7 +410,7 @@ export class VectorDBManagerService extends Disposable {
         `;
             params = [...candidateRowIds, queryEmbedding, limit, limit];
         } else {
-            // 无候选集，使用 KNN 优化搜索
+            // 无候选集，使用 KNN 优化搜索，v.distance 为 L2 距离
             sql = `
             SELECT 
                 m.topic_id,

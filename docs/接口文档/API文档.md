@@ -413,7 +413,7 @@ Body：
   topicId: string;
   topic: string;
   detail: string;
-  distance: number;
+  distance: number; // sqlite-vec MATCH 返回的 L2 距离，越小越相似
   contributors: string;
 }[]
 ```

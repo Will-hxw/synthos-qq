@@ -10,6 +10,7 @@ import { motion } from "framer-motion";
 import EmptyState from "../EmptyState";
 
 import ReferenceList from "@/components/topic-reference/ReferenceList";
+import { l2DistanceToRelevance } from "@/util/vectorRelevance";
 
 interface SearchPanelProps {
     searchLoading: boolean;
@@ -33,7 +34,7 @@ export default function SearchPanel({ searchLoading, searchResults, searchQuery,
 
     if (searchResults.length > 0) {
         const mapped = searchResults.map(item => {
-            const relevance = Math.max(0, Math.min(1, 1 - item.distance));
+            const relevance = l2DistanceToRelevance(item.distance);
 
             return {
                 topicId: item.topicId,

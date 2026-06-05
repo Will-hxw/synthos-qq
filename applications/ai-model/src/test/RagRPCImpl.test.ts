@@ -187,4 +187,117 @@ describe("RagRPCImpl", () => {
         expect(output.map(r => r.topicId)).toEqual(["topic-1", "topic-2"]);
         expect(output[0]).toMatchObject({ topicId: "topic-1", topic: "话题1", distance: 0.1 });
     });
+
+    it("ask 应按 L2 距离公式返回引用相关度", async () => {
+        const embeddingService = {
+            embed: vi.fn().mockResolvedValue(new Float32Array([1, 0]))
+        };
+        const vectorDB = {
+            searchSimilar: vi.fn().mockReturnValue([
+                { topicId: "topic-1", distance: 1 },
+                { topicId: "topic-2", distance: Math.SQRT2 }
+            ])
+        };
+        const agcDB = {
+            getAIDigestResultsByTopicIds: vi.fn().mockResolvedValue(
+                new Map([
+                    ["topic-1", { topic: "话题1", detail: "详情1", contributors: "[]" }],
+                    ["topic-2", { topic: "话题2", detail: "详情2", contributors: "[]" }]
+                ])
+            )
+        };
+        const textGeneratorService = {
+            generateTextWithModelCandidates: vi.fn().mockResolvedValue({ content: "回答" })
+        };
+        const ragCtxBuilder = {
+            buildCtx: vi.fn().mockResolvedValue("prompt")
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            vectorDB as any,
+            agcDB as any,
+            {} as any,
+            {} as any,
+            textGeneratorService as any,
+            ragCtxBuilder as any,
+            embeddingService as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+
+        const output = await rpcImpl.ask({
+            question: "测试问题",
+            topK: 2,
+            enableQueryRewriter: false
+        });
+        const references = output.references || [];
+
+        expect(references).toHaveLength(2);
+        expect(references[0]).toMatchObject({ topicId: "topic-1", topic: "话题1" });
+        expect(references[0].relevance).toBeCloseTo(0.5, 6);
+        expect(references[1]).toMatchObject({ topicId: "topic-2", topic: "话题2" });
+        expect(references[1].relevance).toBeCloseTo(0, 6);
+    });
+
+    it("askStream 应按 L2 距离公式发送引用相关度", async () => {
+        const embeddingService = {
+            embed: vi.fn().mockResolvedValue(new Float32Array([1, 0]))
+        };
+        const vectorDB = {
+            searchSimilar: vi.fn().mockReturnValue([
+                { topicId: "topic-1", distance: 1 },
+                { topicId: "topic-2", distance: Math.SQRT2 }
+            ])
+        };
+        const agcDB = {
+            getAIDigestResultsByTopicIds: vi.fn().mockResolvedValue(
+                new Map([
+                    ["topic-1", { topic: "话题1", detail: "详情1", contributors: "[]" }],
+                    ["topic-2", { topic: "话题2", detail: "详情2", contributors: "[]" }]
+                ])
+            )
+        };
+        const textGeneratorService = {
+            generateTextStreamWithModelCandidates: vi
+                .fn()
+                .mockImplementation(
+                    async (_models: string[], _prompt: string, onToken: (chunk: string) => void) => {
+                        onToken("回答");
+                    }
+                )
+        };
+        const ragCtxBuilder = {
+            buildCtx: vi.fn().mockResolvedValue("prompt")
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            vectorDB as any,
+            agcDB as any,
+            {} as any,
+            {} as any,
+            textGeneratorService as any,
+            ragCtxBuilder as any,
+            embeddingService as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+        const chunks: any[] = [];
+
+        await rpcImpl.askStream(
+            {
+                question: "测试问题",
+                topK: 2,
+                enableQueryRewriter: false
+            },
+            chunk => chunks.push(chunk)
+        );
+
+        const referenceChunk = chunks.find(chunk => chunk.type === "references");
+
+        expect(referenceChunk?.references).toHaveLength(2);
+        expect(referenceChunk.references[0].relevance).toBeCloseTo(0.5, 6);
+        expect(referenceChunk.references[1].relevance).toBeCloseTo(0, 6);
+    });
 });

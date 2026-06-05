@@ -39,6 +39,14 @@ describe("VectorDBManagerService", () => {
 
         return arr;
     };
+    const createUnitVector = (x: number, y: number): Float32Array => {
+        const arr = new Float32Array(TEST_DIMENSION);
+
+        arr[0] = x;
+        arr[1] = y;
+
+        return arr;
+    };
 
     beforeEach(async () => {
         // 创建临时目录
@@ -238,6 +246,21 @@ describe("VectorDBManagerService", () => {
             const result = manager.searchSimilar(query, [], 5);
 
             expect(result).toEqual([]);
+        });
+
+        it("searchSimilar 应返回 sqlite-vec MATCH 的 L2 距离", () => {
+            const query = createUnitVector(1, 0);
+
+            manager.storeEmbedding("same", createUnitVector(1, 0));
+            manager.storeEmbedding("orthogonal", createUnitVector(0, 1));
+            manager.storeEmbedding("opposite", createUnitVector(-1, 0));
+
+            const result = manager.searchSimilar(query, [], 3);
+
+            expect(result.map(item => item.topicId)).toEqual(["same", "orthogonal", "opposite"]);
+            expect(result[0].distance).toBeCloseTo(0, 6);
+            expect(result[1].distance).toBeCloseTo(Math.SQRT2, 6);
+            expect(result[2].distance).toBeCloseTo(2, 6);
         });
 
         it("should return results ordered by distance", () => {
