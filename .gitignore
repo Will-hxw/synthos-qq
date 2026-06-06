@@ -43,3 +43,4 @@ pids.json
 .codex-run-logs/
 .playwright-mcp/
 hxw.sh
+bash.exe.stackdump
