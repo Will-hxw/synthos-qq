@@ -2,7 +2,7 @@
     "dataProviders": {
         "QQ": {
             "VFSExtPath": "./assets/sqlite_vfs_plugins/win_x86/sqlite_ext_ntqq_db.dll",
-            "dbBasePath": "yourspath/Documents/Tencent Files/1176843521/nt_qq/nt_db",
+            "dbBasePath": "C:/Users/<用户名>/Documents/Tencent Files/<QQ号>/nt_qq/nt_db",
             "dbKey": "password",
             "dbPatch": {
                 "enabled": false,
