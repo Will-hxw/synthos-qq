@@ -6,7 +6,6 @@ import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Pagination } from "@heroui/pagination";
 import { Spinner } from "@heroui/spinner";
-import { ScrollShadow } from "@heroui/scroll-shadow";
 import { Tabs, Tab, Chip, Calendar, Select, SelectItem } from "@heroui/react";
 import { FileText, RefreshCw, Plus } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
@@ -548,22 +547,20 @@ export default function ReportsPage() {
                                 </div>
                             ) : reports.length > 0 ? (
                                 <div className="flex flex-col gap-4">
-                                    <ScrollShadow className="max-h-[calc(100vh-320px)]">
-                                        <div className="flex flex-col gap-3 p-2">
-                                            {reports.map(report => (
-                                                <ReportCard
-                                                    key={report.reportId}
-                                                    emailEnabled={emailEnabled}
-                                                    readReports={readReports}
-                                                    report={report}
-                                                    sendingEmailReportId={sendingEmailReportId}
-                                                    onClick={() => void openReportDetail(report)}
-                                                    onMarkAsRead={handleMarkAsRead}
-                                                    onSendEmail={handleSendEmail}
-                                                />
-                                            ))}
-                                        </div>
-                                    </ScrollShadow>
+                                    <div className="flex flex-col gap-3 p-2">
+                                        {reports.map(report => (
+                                            <ReportCard
+                                                key={report.reportId}
+                                                emailEnabled={emailEnabled}
+                                                readReports={readReports}
+                                                report={report}
+                                                sendingEmailReportId={sendingEmailReportId}
+                                                onClick={() => void openReportDetail(report)}
+                                                onMarkAsRead={handleMarkAsRead}
+                                                onSendEmail={handleSendEmail}
+                                            />
+                                        ))}
+                                    </div>
 
                                     {totalPages > 1 && (
                                         <div className="flex justify-center mt-4">
