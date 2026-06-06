@@ -122,20 +122,31 @@ async function main() {
     // 2) 启动多子项目（保持原有 concurrently 行为）
     const { names, commands } = buildConcurrentlyArgs(group);
 
-    // Windows 下这里的 pnpm 通常是 pnpm.ps1（PowerShell 脚本），不能直接被 spawn 执行。
-    // 因此统一通过 powershell -Command 调用，并确保每个 concurrently command 作为一个整体参数传入。
-    const psQuote = value => {
-        const s = String(value);
-        return `'${s.replaceAll("'", "''")}'`;
-    };
+    const isWindows = process.platform === "win32";
+    let child;
 
-    const psCommand = `pnpm exec concurrently -n ${psQuote(names)} ${commands.map(psQuote).join(" ")}`;
+    if (isWindows) {
+        // Windows 下 pnpm 通常是 pnpm.ps1（PowerShell 脚本），不能直接被 spawn 执行。
+        // 因此通过 powershell -Command 调用，并确保每个 concurrently command 作为一个整体参数传入。
+        const psQuote = value => {
+            const s = String(value);
+            return `'${s.replaceAll("'", "''")}'`;
+        };
+        const psCommand = `pnpm exec concurrently -n ${psQuote(names)} ${commands.map(psQuote).join(" ")}`;
 
-    const child = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", psCommand], {
-        cwd: rootDir,
-        stdio: "inherit",
-        windowsHide: true
-    });
+        child = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", psCommand], {
+            cwd: rootDir,
+            stdio: "inherit",
+            windowsHide: true
+        });
+    } else {
+        // Linux / macOS：直接通过 pnpm 执行 concurrently，无需 PowerShell 包装
+        const concurrentlyArgs = ["exec", "concurrently", "-n", names, ...commands];
+        child = spawn("pnpm", concurrentlyArgs, {
+            cwd: rootDir,
+            stdio: "inherit"
+        });
+    }
 
     child.on("exit", code => {
         stopPreStartCommand("launcher-exit");

@@ -34,8 +34,8 @@ services:
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
     volumes:
       - ./docker/config:/config:ro
-      - ./docker/data:/data
-      - ./docker/logs:/logs
+      - ./docker/data:/app/data
+      - ./docker/logs:/app/logs
     command: ["node", "applications/ai-model/dist/index.js"]
     ports:
       - "7979:7979"
@@ -54,8 +54,8 @@ services:
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
     volumes:
       - ./docker/config:/config:ro
-      - ./docker/data:/data
-      - ./docker/logs:/logs
+      - ./docker/data:/app/data
+      - ./docker/logs:/app/logs
     command: ["node", "applications/preprocessing/dist/index.js"]
 
   orchestrator:
@@ -74,8 +74,8 @@ services:
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
     volumes:
       - ./docker/config:/config:ro
-      - ./docker/data:/data
-      - ./docker/logs:/logs
+      - ./docker/data:/app/data
+      - ./docker/logs:/app/logs
     command: ["node", "applications/orchestrator/dist/index.js"]
 
   webui-backend:
@@ -94,8 +94,8 @@ services:
       - SYNTHOS_AI_RPC_BASE_URL=http://ai-model:7979
     volumes:
       - ./docker/config:/config:ro
-      - ./docker/data:/data
-      - ./docker/logs:/logs
+      - ./docker/data:/app/data
+      - ./docker/logs:/app/logs
     command: ["node", "applications/webui-backend/dist/index.js"]
     ports:
       - "3002:3002"

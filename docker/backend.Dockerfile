@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:20-bookworm
+FROM node:22-bookworm
 
 # Native deps for sqlite3/better-sqlite3/sqlcipher/onnxruntime builds when prebuilds are unavailable
 RUN apt-get update \
