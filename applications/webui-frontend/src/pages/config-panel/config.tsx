@@ -481,7 +481,7 @@ export default function ConfigPage() {
 
     // 重置配置
     const handleReset = () => {
-        if (confirm("确定要重置配置吗？所有未保存的更改将丢失。")) {
+        if (confirm("确定要撤销配置吗？所有未保存的更改将丢失。")) {
             loadAll();
             setSaveStatus("idle");
         }
@@ -574,11 +574,18 @@ export default function ConfigPage() {
 
                 {/* 操作栏 */}
                 <div className="grid grid-cols-2 gap-2 mt-4 sm:flex sm:flex-wrap sm:justify-center sm:gap-3">
-                    <Button className="w-full sm:w-auto" color="primary" isDisabled={errors.length > 0} isLoading={isSaving} startContent={!isSaving && <Save className="w-4 h-4" />} onPress={handleSave}>
+                    <Button
+                        className="w-full sm:w-auto"
+                        color="primary"
+                        isDisabled={errors.length > 0}
+                        isLoading={isSaving}
+                        startContent={!isSaving && <Save className="w-4 h-4" />}
+                        onPress={handleSave}
+                    >
                         保存配置
                     </Button>
                     <Button className="w-full sm:w-auto" startContent={<RotateCcw className="w-4 h-4" />} variant="flat" onPress={handleReset}>
-                        重置
+                        撤销
                     </Button>
                     <Button className="w-full sm:w-auto" startContent={<ChevronDown className="w-4 h-4" />} variant="flat" onPress={handleExpandAll}>
                         全部展开
