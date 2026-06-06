@@ -509,7 +509,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                     conversationId: currentConversationId,
                     sessionId: sessionId,
                     enabledTools: ["rag_search", "sql_query"],
-                    maxToolRounds: 5,
+                    maxToolRounds: 20,
                     temperature: 0.7,
                     maxTokens: 2048
                 },
@@ -602,7 +602,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                 animation: "gradient 3s ease-in-out infinite"
                             }}
                         >
-                            智能 Agent 助手(暂关闭)
+                            智能 Agent 助手
                         </div>
                         <p className="text-default-500 text-sm md:text-base">Agent 自主决策SQL搜索和RAG检索</p>
                     </motion.div>

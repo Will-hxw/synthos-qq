@@ -34,6 +34,13 @@ describe("RagRPCImpl", () => {
         const onChunk = vi.fn();
         const agentDB = {
             createConversation: vi.fn().mockResolvedValue(undefined),
+            getConversationById: vi.fn().mockResolvedValue({
+                id: "conversation-1",
+                sessionId: undefined,
+                title: "测试问题",
+                createdAt: 1,
+                updatedAt: 1
+            }),
             addMessage: vi.fn().mockResolvedValue(undefined),
             getMessagesByConversationId: vi.fn().mockResolvedValue([])
         };
@@ -88,6 +95,130 @@ describe("RagRPCImpl", () => {
             })
         );
         expect(onChunk).not.toHaveBeenCalledWith(expect.objectContaining({ type: "done" }));
+    });
+
+    it("Agent流式请求传入新conversationId时应先创建会话元数据", async () => {
+        const onChunk = vi.fn();
+        const agentDB = {
+            createConversation: vi.fn().mockResolvedValue(undefined),
+            getConversationById: vi.fn().mockResolvedValue(null),
+            addMessage: vi.fn().mockResolvedValue(undefined),
+            getMessagesByConversationId: vi.fn().mockResolvedValue([])
+        };
+        const agentExecutor = {
+            executeStream: vi.fn().mockResolvedValue({
+                content: "回答",
+                toolsUsed: [],
+                toolRounds: 1,
+                totalUsage: undefined
+            })
+        };
+        const agentToolCatalog = {
+            getEnabledToolDefinitions: vi.fn().mockReturnValue([])
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            agentExecutor as any,
+            agentDB as any,
+            agentToolCatalog as any
+        );
+
+        await rpcImpl.agentAsk(
+            {
+                question: "新的 Agent 问题",
+                conversationId: "conversation-new",
+                sessionId: "session-1"
+            },
+            onChunk
+        );
+
+        expect(agentDB.getConversationById).toHaveBeenCalledWith("conversation-new");
+        expect(agentDB.createConversation).toHaveBeenCalledWith(
+            "conversation-new",
+            "新的 Agent 问题",
+            "session-1"
+        );
+        expect(agentDB.addMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                conversationId: "conversation-new",
+                role: "user",
+                content: "新的 Agent 问题"
+            })
+        );
+        expect(agentDB.addMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                conversationId: "conversation-new",
+                role: "assistant",
+                content: "回答"
+            })
+        );
+        expect(onChunk).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "done",
+                conversationId: "conversation-new",
+                content: "回答"
+            })
+        );
+    });
+
+    it("Agent流式请求传入已有conversationId时不应重复创建会话", async () => {
+        const onChunk = vi.fn();
+        const agentDB = {
+            createConversation: vi.fn().mockResolvedValue(undefined),
+            getConversationById: vi.fn().mockResolvedValue({
+                id: "conversation-existing",
+                sessionId: "session-1",
+                title: "已有会话",
+                createdAt: 1,
+                updatedAt: 1
+            }),
+            addMessage: vi.fn().mockResolvedValue(undefined),
+            getMessagesByConversationId: vi.fn().mockResolvedValue([])
+        };
+        const agentExecutor = {
+            executeStream: vi.fn().mockResolvedValue({
+                content: "回答",
+                toolsUsed: [],
+                toolRounds: 1,
+                totalUsage: undefined
+            })
+        };
+        const agentToolCatalog = {
+            getEnabledToolDefinitions: vi.fn().mockReturnValue([])
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            agentExecutor as any,
+            agentDB as any,
+            agentToolCatalog as any
+        );
+
+        await rpcImpl.agentAsk(
+            {
+                question: "继续追问",
+                conversationId: "conversation-existing",
+                sessionId: "session-1"
+            },
+            onChunk
+        );
+
+        expect(agentDB.getConversationById).toHaveBeenCalledWith("conversation-existing");
+        expect(agentDB.createConversation).not.toHaveBeenCalled();
+        expect(agentDB.addMessage).toHaveBeenCalledTimes(2);
     });
 
     it("Multi-Query 扩展失败时应降级为仅使用原始问题，不抛错中断", async () => {

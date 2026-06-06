@@ -87,7 +87,7 @@ export const AgentAskInputSchema = z.object({
     conversationId: z.string().optional(),
     sessionId: z.string().optional(),
     enabledTools: z.array(z.enum(["rag_search", "sql_query", "web_search"])).default(["rag_search", "sql_query"]),
-    maxToolRounds: z.number().int().positive().default(5),
+    maxToolRounds: z.number().int().positive().default(20),
     temperature: z.number().min(0).max(2).default(0.7),
     maxTokens: z.number().int().positive().default(2048)
 });

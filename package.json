@@ -24,6 +24,11 @@
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.15.0",
+  "pnpm": {
+    "overrides": {
+      "better-sqlite3": "12.10.0"
+    }
+  },
   "dependencies": {
     "@hokify/agenda": "^6.3.0",
     "@trpc/client": "^10.45.2",

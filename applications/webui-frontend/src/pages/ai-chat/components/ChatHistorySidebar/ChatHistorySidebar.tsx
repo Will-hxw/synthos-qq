@@ -69,10 +69,6 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
 
                     setAgentConversations(prev => (append ? [...prev, ...next] : next));
                     setAgentHasMore(next.length >= PAGE_SIZE);
-
-                    if (!append && next.length > 0 && !selectedAgentConversationId) {
-                        onSelectAgentConversation?.(next[0].id);
-                    }
                 }
             } catch (error) {
                 console.error("加载 Agent 对话列表失败:", error);
@@ -80,7 +76,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 setAgentLoading(false);
             }
         },
-        [activeTab, selectedSessionId, selectedAgentConversationId, onSelectAgentConversation]
+        [activeTab, selectedSessionId]
     );
 
     // 时间分组
@@ -120,30 +116,27 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     }, [sessions, selectedSidebarTab]);
 
     // 加载会话列表
-    const loadSessions = useCallback(
-        async (append: boolean = false) => {
-            setLoading(true);
-            try {
-                const offset = append ? sessionsLengthRef.current : 0;
-                const response = await getSessionList(PAGE_SIZE, offset);
+    const loadSessions = useCallback(async (append: boolean = false) => {
+        setLoading(true);
+        try {
+            const offset = append ? sessionsLengthRef.current : 0;
+            const response = await getSessionList(PAGE_SIZE, offset);
 
-                if (response.success) {
-                    if (append) {
-                        setSessions(prev => [...prev, ...response.data.sessions.map(s => ({ ...s }))]);
-                    } else {
-                        setSessions(response.data.sessions.map(s => ({ ...s })));
-                    }
-                    setHasMore(response.data.hasMore);
-                    setTotal(response.data.total);
+            if (response.success) {
+                if (append) {
+                    setSessions(prev => [...prev, ...response.data.sessions.map(s => ({ ...s }))]);
+                } else {
+                    setSessions(response.data.sessions.map(s => ({ ...s })));
                 }
-            } catch (error) {
-                console.error("加载会话列表失败:", error);
-            } finally {
-                setLoading(false);
+                setHasMore(response.data.hasMore);
+                setTotal(response.data.total);
             }
-        },
-        []
-    );
+        } catch (error) {
+            console.error("加载会话列表失败:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
     const autoLoadLockRef = useRef(false);
     const autoLoadAgentLockRef = useRef(false);

@@ -30,6 +30,71 @@ export class SQLQueryTool {
     public constructor(@inject(COMMON_TOKENS.ImDbAccessService) private imDB: ImDbAccessService) {}
 
     /**
+     * 获取必填 SQL 查询语句。
+     */
+    private _getRequiredQuery(params: Partial<SQLQueryParams>): string {
+        if (typeof params.query !== "string" || params.query.trim().length === 0) {
+            throw new Error("sql_query 参数 query 不能为空");
+        }
+
+        return params.query.trim();
+    }
+
+    /**
+     * 规范化查询条数上限。
+     */
+    private _normalizeLimit(limit: unknown): number {
+        if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+            return 100;
+        }
+
+        return Math.min(Math.floor(limit), 1000);
+    }
+
+    /**
+     * 追加或下调 LIMIT，保留用户显式指定的更小 LIMIT。
+     */
+    private _applyLimitCap(query: string, limit: number): string {
+        const normalizedQuery = query.toLowerCase();
+        const limitIndex = normalizedQuery.lastIndexOf("limit");
+
+        if (limitIndex < 0) {
+            return `${query} LIMIT ${limit}`;
+        }
+
+        const limitKeywordEnd = limitIndex + "limit".length;
+        const afterLimit = query.slice(limitKeywordEnd);
+        const trimmedAfterLimit = afterLimit.trimStart();
+        const leadingWhitespaceLength = afterLimit.length - trimmedAfterLimit.length;
+        let numberEndIndex = leadingWhitespaceLength;
+
+        while (numberEndIndex < afterLimit.length) {
+            const code = afterLimit.charCodeAt(numberEndIndex);
+
+            if (code < 48 || code > 57) {
+                break;
+            }
+            numberEndIndex += 1;
+        }
+
+        if (numberEndIndex === leadingWhitespaceLength) {
+            return query;
+        }
+
+        const originalLimit = Number(afterLimit.slice(leadingWhitespaceLength, numberEndIndex));
+
+        if (!Number.isFinite(originalLimit) || originalLimit <= limit) {
+            return query;
+        }
+
+        return (
+            query.slice(0, limitKeywordEnd + leadingWhitespaceLength) +
+            String(limit) +
+            query.slice(limitKeywordEnd + numberEndIndex)
+        );
+    }
+
+    /**
      * 获取工具定义
      */
     public getDefinition(): ToolDefinition {
@@ -67,8 +132,8 @@ export class SQLQueryTool {
      */
     public getExecutor(): ToolExecutor<SQLQueryParams> {
         return async (params: SQLQueryParams) => {
-            const { query, limit = 100 } = params;
-            const actualLimit = Math.min(limit, 1000);
+            const query = this._getRequiredQuery(params);
+            const actualLimit = this._normalizeLimit(params.limit);
 
             this.LOGGER.info(`执行 SQL 查询: ${query.substring(0, 200)}...`);
 
@@ -95,15 +160,8 @@ export class SQLQueryTool {
                     }
                 }
 
-                // 自动添加 LIMIT 限制
-                let finalQuery = query.trim();
-
-                if (!normalizedQuery.includes("limit")) {
-                    finalQuery += ` LIMIT ${actualLimit}`;
-                } else {
-                    // 替换 LIMIT 值为 actualLimit（如果原 LIMIT 更大）
-                    finalQuery = finalQuery.replace(/LIMIT\s+\d+/gi, `LIMIT ${actualLimit}`);
-                }
+                // 自动添加 LIMIT 限制，已有更小 LIMIT 时保持用户语义
+                const finalQuery = this._applyLimitCap(query.trim(), actualLimit);
 
                 // 执行查询（直接访问内部的 db 实例）
                 // TODO: 这里需要 ImDbAccessService 提供一个公共的 query 方法

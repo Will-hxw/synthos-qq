@@ -521,18 +521,10 @@ export class RagRPCImpl implements RAGRPCImplementation {
         this.LOGGER.info(`收到 Agent 问答请求: "${input.question}"`);
         this._throwIfAgentAborted(options.abortSignal);
 
-        // 1. 确定对话 ID
-        let conversationId: string = input.conversationId || randomUUID();
+        // 1. 确定对话 ID，并保证会话元数据存在。
+        const conversationId: string = input.conversationId || randomUUID();
 
-        if (!input.conversationId) {
-            // 创建新对话
-            await this.agentDB.createConversation(
-                conversationId,
-                input.question.substring(0, 50), // 用问题前50个字符作为标题
-                input.sessionId
-            );
-            this.LOGGER.info(`创建新对话: ${conversationId}`);
-        }
+        await this._ensureAgentConversation(conversationId, input.question, input.sessionId);
 
         // 2. 保存用户消息
         const userMessageId = randomUUID();
@@ -626,6 +618,34 @@ export class RagRPCImpl implements RAGRPCImplementation {
     private _throwIfAgentAborted(abortSignal: AbortSignal | undefined): void {
         if (abortSignal?.aborted) {
             throw new Error("执行被用户中止");
+        }
+    }
+
+    /**
+     * 保证 Agent 会话记录存在，避免先写消息后历史列表不可见。
+     */
+    private async _ensureAgentConversation(
+        conversationId: string,
+        question: string,
+        sessionId: string | undefined
+    ): Promise<void> {
+        const existingConversation = await this.agentDB.getConversationById(conversationId);
+
+        if (existingConversation) {
+            return;
+        }
+
+        try {
+            await this.agentDB.createConversation(conversationId, question.substring(0, 50), sessionId);
+            this.LOGGER.info(`创建 Agent 对话: ${conversationId}`);
+        } catch (error) {
+            const conversationAfterCreate = await this.agentDB.getConversationById(conversationId);
+
+            if (conversationAfterCreate) {
+                return;
+            }
+
+            throw error;
         }
     }
 

@@ -51,6 +51,19 @@ export interface AgentMessage {
     tokenUsage?: string;
 }
 
+type AgentConversationRow = AgentConversation & {
+    session_id?: string | null;
+    created_at?: number;
+    updated_at?: number;
+};
+
+type AgentMessageRow = AgentMessage & {
+    conversation_id?: string | null;
+    tools_used?: string | null;
+    tool_rounds?: number | null;
+    token_usage?: string | null;
+};
+
 /**
  * Agent 数据库访问服务
  */
@@ -120,9 +133,9 @@ export class AgentDbAccessService extends Disposable {
         sql += ` ORDER BY updated_at DESC LIMIT ?`;
         params.push(limit);
 
-        const rows = await this.db.all<AgentConversation>(sql, params);
+        const rows = await this.db.all<AgentConversationRow>(sql, params);
 
-        return rows;
+        return rows.map(row => this._mapConversationRow(row));
     }
 
     /**
@@ -156,9 +169,9 @@ export class AgentDbAccessService extends Disposable {
         sql += ` ORDER BY updated_at DESC LIMIT ?`;
         params.push(limit);
 
-        const rows = await this.db.all<AgentConversation>(sql, params);
+        const rows = await this.db.all<AgentConversationRow>(sql, params);
 
-        return rows;
+        return rows.map(row => this._mapConversationRow(row));
     }
 
     /**
@@ -167,9 +180,11 @@ export class AgentDbAccessService extends Disposable {
      * @returns 对话记录，不存在则返回 null
      */
     public async getConversationById(id: string): Promise<AgentConversation | null> {
-        const row = await this.db.get<AgentConversation>(`SELECT * FROM agent_conversations WHERE id = ?`, [id]);
+        const row = await this.db.get<AgentConversationRow>(`SELECT * FROM agent_conversations WHERE id = ?`, [
+            id
+        ]);
 
-        return row || null;
+        return row ? this._mapConversationRow(row) : null;
     }
 
     /**
@@ -232,12 +247,12 @@ export class AgentDbAccessService extends Disposable {
      * @returns 消息列表
      */
     public async getMessagesByConversationId(conversationId: string): Promise<AgentMessage[]> {
-        const rows = await this.db.all<AgentMessage>(
+        const rows = await this.db.all<AgentMessageRow>(
             `SELECT * FROM agent_messages WHERE conversation_id = ? ORDER BY timestamp ASC`,
             [conversationId]
         );
 
-        return rows;
+        return rows.map(row => this._mapMessageRow(row));
     }
 
     /**
@@ -262,10 +277,10 @@ export class AgentDbAccessService extends Disposable {
         sql += ` ORDER BY timestamp DESC LIMIT ?`;
         params.push(limit);
 
-        const rows = await this.db.all<AgentMessage>(sql, params);
+        const rows = await this.db.all<AgentMessageRow>(sql, params);
 
         // 返回正序，方便 UI 直接 append
-        return rows.reverse();
+        return rows.reverse().map(row => this._mapMessageRow(row));
     }
 
     /**
@@ -289,5 +304,44 @@ export class AgentDbAccessService extends Disposable {
         );
 
         return result?.count || 0;
+    }
+
+    private _mapConversationRow(row: AgentConversationRow): AgentConversation {
+        return {
+            id: row.id,
+            sessionId: row.sessionId || row.session_id || undefined,
+            title: row.title,
+            createdAt: this._getRequiredNumber(row.createdAt ?? row.created_at, "createdAt"),
+            updatedAt: this._getRequiredNumber(row.updatedAt ?? row.updated_at, "updatedAt")
+        };
+    }
+
+    private _mapMessageRow(row: AgentMessageRow): AgentMessage {
+        return {
+            id: row.id,
+            conversationId: this._getRequiredString(row.conversationId || row.conversation_id, "conversationId"),
+            role: row.role,
+            content: row.content,
+            timestamp: row.timestamp,
+            toolsUsed: row.toolsUsed || row.tools_used || undefined,
+            toolRounds: row.toolRounds ?? row.tool_rounds ?? undefined,
+            tokenUsage: row.tokenUsage || row.token_usage || undefined
+        };
+    }
+
+    private _getRequiredNumber(value: number | undefined | null, fieldName: string): number {
+        if (typeof value !== "number") {
+            throw new Error(`Agent 数据库记录缺少字段: ${fieldName}`);
+        }
+
+        return value;
+    }
+
+    private _getRequiredString(value: string | undefined | null, fieldName: string): string {
+        if (!value) {
+            throw new Error(`Agent 数据库记录缺少字段: ${fieldName}`);
+        }
+
+        return value;
     }
 }

@@ -7,6 +7,7 @@ import type {
     AgentConfig,
     AgentResult,
     AgentStreamChunk,
+    ToolDefinition,
     ToolCall,
     ToolContext,
     TokenUsage
@@ -244,6 +245,134 @@ export class LangGraphAgentExecutor {
         return [...arr, item];
     }
 
+    /**
+     * 规范化流式工具调用参数。
+     */
+    private _normalizeToolCallArguments(args: unknown): Record<string, unknown> {
+        if (!args) {
+            return {};
+        }
+
+        if (typeof args === "string") {
+            try {
+                const parsed = JSON.parse(args);
+
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    return parsed as Record<string, unknown>;
+                }
+            } catch {
+                return {};
+            }
+        }
+
+        if (typeof args === "object" && !Array.isArray(args)) {
+            return args as Record<string, unknown>;
+        }
+
+        return {};
+    }
+
+    /**
+     * 合并同一个 tool_call 的流式增量参数。
+     */
+    private _mergeToolCallArguments(
+        base: Record<string, unknown>,
+        delta: Record<string, unknown>
+    ): Record<string, unknown> {
+        return {
+            ...base,
+            ...delta
+        };
+    }
+
+    /**
+     * 将工具 JSON Schema 的基础字段转换为 LangChain 可执行的 zod schema。
+     */
+    private _createToolInputSchema(definition: ToolDefinition): z.ZodObject<z.ZodRawShape> {
+        const requiredFields = new Set(definition.function.parameters.required || []);
+        const shape: z.ZodRawShape = {};
+
+        for (const [name, propertyDefinition] of Object.entries(definition.function.parameters.properties)) {
+            shape[name] = this._createToolPropertySchema(name, propertyDefinition, requiredFields.has(name));
+        }
+
+        return z.object(shape).passthrough();
+    }
+
+    /**
+     * 转换单个工具参数字段，必填字符串同时拒绝空白内容。
+     */
+    private _createToolPropertySchema(
+        name: string,
+        propertyDefinition: unknown,
+        isRequired: boolean
+    ): z.ZodTypeAny {
+        const propertyType =
+            propertyDefinition && typeof propertyDefinition === "object"
+                ? (propertyDefinition as { type?: string }).type
+                : undefined;
+
+        let schema: z.ZodTypeAny;
+
+        switch (propertyType) {
+            case "string":
+                schema = z.string();
+                if (isRequired) {
+                    schema = schema.refine(value => value.trim().length > 0, {
+                        message: `${name} 不能为空`
+                    });
+                }
+                break;
+            case "number":
+                schema = z.number();
+                break;
+            case "integer":
+                schema = z.number().int();
+                break;
+            case "boolean":
+                schema = z.boolean();
+                break;
+            case "array":
+                schema = z.array(z.unknown());
+                break;
+            case "object":
+                schema = z.record(z.unknown());
+                break;
+            default:
+                schema = z.unknown();
+                break;
+        }
+
+        if (!isRequired) {
+            schema = schema.optional();
+        }
+
+        return schema;
+    }
+
+    /**
+     * 决定 LangGraph 下一跳节点。
+     */
+    private _getNextGraphNode(
+        state: Pick<AgentGraphState, "messages" | "runToolRounds" | "maxToolRounds">
+    ): "tools" | "maxRounds" | typeof END {
+        const lastMessage = state.messages.at(-1);
+
+        if (!lastMessage || !AIMessage.isInstance(lastMessage)) {
+            return END;
+        }
+
+        if (state.runToolRounds >= state.maxToolRounds) {
+            return "maxRounds";
+        }
+
+        if (lastMessage.tool_calls?.length) {
+            return "tools";
+        }
+
+        return END;
+    }
+
     private async _callLLMStream(args: {
         messages: BaseMessage[];
         tools: any[];
@@ -255,12 +384,47 @@ export class LangGraphAgentExecutor {
         abortSignal: AbortSignal | undefined;
     }): Promise<{ content: string; toolCalls: ToolCall[]; usage?: TokenUsage }> {
         let fullContent = "";
-        const toolCalls: ToolCall[] = [];
         let lastChunk: any = null;
 
-        const emittedToolCallKeys = new Set<string>();
-        const seenToolCallIds = new Set<string>();
-        const seenToolCallNoIdKeys = new Set<string>();
+        const toolCallDrafts = new Map<
+            string,
+            {
+                id: string;
+                name: string;
+                argumentsText: string;
+                arguments: Record<string, unknown>;
+            }
+        >();
+        const toolCallOrder: string[] = [];
+        const getToolCallKey = (tc: any, index: number) => {
+            const toolCallIndex = typeof tc?.index === "number" ? tc.index : index;
+
+            return `index:${toolCallIndex}`;
+        };
+        const getOrCreateToolCallDraft = (tc: any, index: number) => {
+            const toolCallKey = getToolCallKey(tc, index);
+            let draft = toolCallDrafts.get(toolCallKey);
+
+            if (!draft) {
+                toolCallOrder.push(toolCallKey);
+                draft = {
+                    id: tc.id || `tool-call-${index}`,
+                    name: tc.name || "",
+                    argumentsText: "",
+                    arguments: {}
+                };
+                toolCallDrafts.set(toolCallKey, draft);
+            }
+
+            if (tc.id) {
+                draft.id = tc.id;
+            }
+            if (tc.name) {
+                draft.name = tc.name;
+            }
+
+            return draft;
+        };
 
         const stream = await this.textGeneratorService.streamWithMessages(
             undefined,
@@ -289,62 +453,53 @@ export class LangGraphAgentExecutor {
             }
 
             if (chunk.tool_calls && chunk.tool_calls.length > 0) {
-                for (const tc of chunk.tool_calls) {
-                    const toolCallId = tc.id || crypto.randomUUID();
-                    const toolArgs = (tc.args || {}) as Record<string, unknown>;
+                for (const [index, tc] of chunk.tool_calls.entries()) {
+                    const draft = getOrCreateToolCallDraft(tc, index);
+                    const toolArgs = this._normalizeToolCallArguments(tc.args);
 
-                    if (tc.id) {
-                        if (seenToolCallIds.has(tc.id)) {
-                            continue;
-                        }
-                        seenToolCallIds.add(tc.id);
-                    } else {
-                        // 仅在缺失 id 时用 name+args 去重，避免流式增量导致重复执行
-                        let callKey = "";
-
-                        try {
-                            callKey = `${tc.name}::${JSON.stringify(toolArgs)}`;
-                        } catch {
-                            callKey = `${tc.name}`;
-                        }
-
-                        if (seenToolCallNoIdKeys.has(callKey)) {
-                            continue;
-                        }
-                        seenToolCallNoIdKeys.add(callKey);
+                    if (Object.keys(toolArgs).length > 0) {
+                        draft.arguments = this._mergeToolCallArguments(draft.arguments, toolArgs);
                     }
+                }
+            }
 
-                    // 注意：stream 过程中 tool_calls 可能重复上报，这里做一次去重
-                    let key = "";
+            if (chunk.tool_call_chunks && chunk.tool_call_chunks.length > 0) {
+                for (const [index, tc] of chunk.tool_call_chunks.entries()) {
+                    const draft = getOrCreateToolCallDraft(tc, index);
 
-                    try {
-                        key = `${tc.name}::${JSON.stringify(toolArgs)}::${toolCallId}`;
-                    } catch {
-                        key = `${tc.name}::${toolCallId}`;
+                    if (typeof tc.args === "string" && tc.args) {
+                        draft.argumentsText += tc.args;
                     }
+                    const toolArgs = this._normalizeToolCallArguments(draft.argumentsText || tc.args);
 
-                    if (!emittedToolCallKeys.has(key)) {
-                        emittedToolCallKeys.add(key);
-                        args.onChunk({
-                            type: "tool_call",
-                            ts: Date.now(),
-                            conversationId: args.conversationId,
-                            toolCallId,
-                            toolName: tc.name,
-                            toolArgs
-                        });
+                    if (Object.keys(toolArgs).length > 0) {
+                        draft.arguments = this._mergeToolCallArguments(draft.arguments, toolArgs);
                     }
-
-                    toolCalls.push({
-                        id: toolCallId,
-                        name: tc.name,
-                        arguments: toolArgs
-                    });
                 }
             }
         }
 
         const usage = this._extractUsage(lastChunk, args.messages, fullContent);
+        const toolCalls: ToolCall[] = toolCallOrder
+            .map(key => toolCallDrafts.get(key))
+            .filter((draft): draft is NonNullable<typeof draft> => Boolean(draft))
+            .filter(draft => args.enabledTools.includes(draft.name))
+            .map(draft => ({
+                id: draft.id,
+                name: draft.name,
+                arguments: draft.arguments
+            }));
+
+        for (const tc of toolCalls) {
+            args.onChunk({
+                type: "tool_call",
+                ts: Date.now(),
+                conversationId: args.conversationId,
+                toolCallId: tc.id,
+                toolName: tc.name,
+                toolArgs: tc.arguments
+            });
+        }
 
         // 兼容：部分模型/渠道不支持原生 tool_calls，沿用旧实现的“文本工具调用”兜底
         if (toolCalls.length === 0 && fullContent) {
@@ -391,8 +546,9 @@ export class LangGraphAgentExecutor {
         void historyMessages;
         void modelName;
 
-        const maxToolRounds = config.maxToolRounds ?? 5;
+        const maxToolRounds = config.maxToolRounds ?? 20;
         const enabledTools = config.enabledTools ?? [];
+        const recursionLimit = Math.max(25, maxToolRounds * 2 + 5);
 
         // thread_id 必须稳定：优先使用 conversationId。RagRPCImpl 会保证 conversationId 已存在。
         const conversationId = String((context as any).conversationId || crypto.randomUUID());
@@ -474,8 +630,7 @@ export class LangGraphAgentExecutor {
             return new DynamicStructuredTool({
                 name: toolName,
                 description: def.function.description,
-                // 这里不做强校验：具体参数校验由各 tool 自己处理/或由 SQL/搜索层兜底报错。
-                schema: z.object({}).passthrough(),
+                schema: this._createToolInputSchema(def),
                 func: async (input: Record<string, unknown>) => {
                     if (config.abortSignal?.aborted) {
                         throw new Error("执行被用户中止");
@@ -492,7 +647,7 @@ export class LangGraphAgentExecutor {
             });
         });
 
-        const lgToolNode = new ToolNode(langChainTools);
+        const lgToolNode = new ToolNode(langChainTools, { handleToolErrors: true });
 
         const toolsNode = async (state: AgentGraphState): Promise<Partial<AgentGraphState>> => {
             const lastMessage = state.messages.at(-1);
@@ -569,23 +724,8 @@ export class LangGraphAgentExecutor {
             };
         };
 
-        const shouldContinue = (state: AgentGraphState): "toolNode" | "maxRounds" | typeof END => {
-            const lastMessage = state.messages.at(-1);
-
-            if (!lastMessage || !AIMessage.isInstance(lastMessage)) {
-                return END;
-            }
-
-            if (state.runToolRounds >= state.maxToolRounds) {
-                return "maxRounds";
-            }
-
-            if (lastMessage.tool_calls?.length) {
-                return "toolNode";
-            }
-
-            return END;
-        };
+        const shouldContinue = (state: AgentGraphState): "tools" | "maxRounds" | typeof END =>
+            this._getNextGraphNode(state);
 
         const workflow = new StateGraph(AgentState)
             .addNode("llmCall", llmCall as any)
@@ -615,6 +755,7 @@ export class LangGraphAgentExecutor {
                     configurable: {
                         thread_id: conversationId
                     },
+                    recursionLimit,
                     signal: config.abortSignal
                 } as any
             )) as AgentGraphState;

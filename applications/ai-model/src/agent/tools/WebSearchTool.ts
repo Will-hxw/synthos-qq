@@ -26,6 +26,28 @@ export class WebSearchTool {
     private LOGGER = Logger.withTag("WebSearchTool");
 
     /**
+     * 获取必填 Web 搜索查询。
+     */
+    private _getRequiredQuery(params: Partial<WebSearchParams>): string {
+        if (typeof params.query !== "string" || params.query.trim().length === 0) {
+            throw new Error("web_search 参数 query 不能为空");
+        }
+
+        return params.query.trim();
+    }
+
+    /**
+     * 规范化搜索结果条数上限。
+     */
+    private _normalizeLimit(limit: unknown): number {
+        if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+            return 5;
+        }
+
+        return Math.min(Math.floor(limit), 20);
+    }
+
+    /**
      * 获取工具定义
      */
     public getDefinition(): ToolDefinition {
@@ -61,7 +83,8 @@ export class WebSearchTool {
      */
     public getExecutor(): ToolExecutor<WebSearchParams> {
         return async (params: WebSearchParams) => {
-            const { query, limit = 5 } = params;
+            const query = this._getRequiredQuery(params);
+            const limit = this._normalizeLimit(params.limit);
 
             this.LOGGER.info(`执行 DuckDuckGo 搜索: query="${query}", limit=${limit}`);
 
