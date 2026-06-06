@@ -116,7 +116,7 @@ export default function AIDigestPage() {
         <DefaultLayout>
             <section className="flex flex-col gap-4 py-8 md:py-10">
                 <div className="flex flex-col items-center justify-center gap-4">
-                    <h1 className={title()}>AI摘要结果</h1>
+                    <h1 className={title()}>AI摘要结果（暂关闭）</h1>
                     <p className="text-default-600 max-w-2xl text-center">浏览AI生成的聊天摘要结果，支持按会话或主题查看详细内容</p>
                 </div>
 

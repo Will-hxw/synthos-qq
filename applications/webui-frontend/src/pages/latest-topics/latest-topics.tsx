@@ -24,7 +24,7 @@ import ResponsivePopover from "@/components/ResponsivePopover";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 12;
-const DEFAULT_RECENT_DAYS = 730;
+const DEFAULT_RECENT_DAYS = 30;
 const TOPICS_PER_PAGE_OPTIONS = [3, 6, 9, 12, 30] as const;
 
 const LatestTopicsFilterPanel = lazy(() => import("./components/LatestTopicsFilterPanel"));

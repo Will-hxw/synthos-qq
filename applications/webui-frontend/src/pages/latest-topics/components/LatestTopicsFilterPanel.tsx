@@ -95,7 +95,9 @@ export default function LatestTopicsFilterPanel({
                     }}
                 >
                     {TOPICS_PER_PAGE_OPTIONS.map(pageSize => (
-                        <SelectItem key={String(pageSize)}>{pageSize}</SelectItem>
+                        <SelectItem key={String(pageSize)} textValue={String(pageSize)}>
+                            {pageSize}
+                        </SelectItem>
                     ))}
                 </Select>
             </div>

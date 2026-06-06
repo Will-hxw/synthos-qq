@@ -602,7 +602,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                 animation: "gradient 3s ease-in-out infinite"
                             }}
                         >
-                            智能 Agent 助手
+                            智能 Agent 助手（暂关闭）
                         </div>
                         <p className="text-default-500 text-sm md:text-base">我可以使用 RAG 搜索、SQL 查询等工具来回答你的问题</p>
                     </motion.div>
