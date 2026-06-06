@@ -2,6 +2,7 @@ import Logger from "@root/common/util/Logger";
 
 import { EmbeddingService } from "../services/embedding/EmbeddingService";
 import { EmbeddingPromptStore } from "../context/prompts/EmbeddingPromptStore";
+const INTEREST_SCORE_SCALE = 5;
 const MAX_INPUT_LENGTH = Infinity; // 保留此配置项，以备后续可能需要限制输入长度
 
 /**
@@ -216,13 +217,19 @@ export class SemanticRater {
                 negSim = this._getMaxSimilarity(negativeKeywords, negativeKeywordVectors, topicVec);
             }
 
-            let score = posSim - negSim; // 理论范围 [-1, 1]
+            const rawScore = posSim - negSim; // 理论范围 [-1, 1]
 
-            // 防御性 clamp（虽然理论上不会越界，但确保鲁棒性）
-            scores.push(Math.max(-1, Math.min(1, score)));
+            scores.push(this._calibrateScore(rawScore));
         }
 
         return scores;
+    }
+
+    /**
+     * 对原始兴趣分进行线性校准，保持正负含义并放大可见差异。
+     */
+    private _calibrateScore(rawScore: number): number {
+        return Math.max(-1, Math.min(1, rawScore * INTEREST_SCORE_SCALE));
     }
 
     private _getMaxSimilarity(

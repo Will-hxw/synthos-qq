@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import { SemanticRater } from "../misc/SemanticRater";
 import { EmbeddingService } from "../services/embedding/EmbeddingService";
+import { EmbeddingPromptStore } from "../context/prompts/EmbeddingPromptStore";
 
 // Mock Logger
 vi.mock("@root/common/util/Logger", () => {
@@ -19,7 +20,35 @@ vi.mock("@root/common/util/Logger", () => {
 });
 
 // 简单的模拟向量生成：基于文本内容生成一个确定性的向量
+const knownVectors = new Map<string, Float32Array>();
+
+const createVectorWithBaseSimilarity = (similarity: number): Float32Array => {
+    const vector = new Float32Array(1024);
+
+    vector[0] = similarity;
+    vector[1] = Math.sqrt(1 - similarity * similarity);
+
+    return vector;
+};
+
+const setKnownVector = (text: string, similarity: number): void => {
+    knownVectors.set(text, createVectorWithBaseSimilarity(similarity));
+};
+
+const setKnownInterestVector = (keyword: string, similarity: number): void => {
+    knownVectors.set(
+        EmbeddingPromptStore.getEmbeddingPromptForInterestScore(keyword),
+        createVectorWithBaseSimilarity(similarity)
+    );
+};
+
 const generateMockVector = (text: string): Float32Array => {
+    const knownVector = knownVectors.get(text);
+
+    if (knownVector) {
+        return knownVector;
+    }
+
     const vector = new Float32Array(1024);
 
     // 基于文本生成确定性向量，相似文本会有相似的向量
@@ -78,6 +107,7 @@ describe("SemanticRater", () => {
     const TEST_DIMENSION = 1024;
 
     beforeEach(() => {
+        knownVectors.clear();
         embedBatchCallCount = 0; // 重置计数器
         embedBatchTextCount = 0; // 重置文本计数
         mockEmbeddingService = new EmbeddingService(TEST_BASE_URL, TEST_MODEL, TEST_DIMENSION);
@@ -171,6 +201,76 @@ describe("SemanticRater", () => {
             expect(score).toBeGreaterThanOrEqual(-1);
             expect(score).toBeLessThanOrEqual(1);
         });
+    });
+
+    it("应按 5 倍线性校准正向原始差值", async () => {
+        const topic = "校准正向话题";
+        const positiveKeyword = "正向相似度0.58";
+        const negativeKeyword = "负向相似度0.50";
+
+        setKnownVector(topic, 1);
+        setKnownInterestVector(positiveKeyword, 0.58);
+        setKnownInterestVector(negativeKeyword, 0.5);
+
+        const score = await rater.scoreTopic(
+            [
+                { keyword: positiveKeyword, liked: true },
+                { keyword: negativeKeyword, liked: false }
+            ],
+            topic
+        );
+
+        expect(score).toBeCloseTo(0.4, 6);
+    });
+
+    it("应按 5 倍线性校准负向原始差值", async () => {
+        const topic = "校准负向话题";
+        const positiveKeyword = "正向相似度0.44";
+        const negativeKeyword = "负向相似度0.50";
+
+        setKnownVector(topic, 1);
+        setKnownInterestVector(positiveKeyword, 0.44);
+        setKnownInterestVector(negativeKeyword, 0.5);
+
+        const score = await rater.scoreTopic(
+            [
+                { keyword: positiveKeyword, liked: true },
+                { keyword: negativeKeyword, liked: false }
+            ],
+            topic
+        );
+
+        expect(score).toBeCloseTo(-0.3, 6);
+    });
+
+    it("应在校准后裁剪到分数边界", async () => {
+        const positiveTopic = "正向裁剪话题";
+        const negativeTopic = "负向裁剪话题";
+
+        setKnownVector(positiveTopic, 1);
+        setKnownInterestVector("正向裁剪高相似度", 0.9);
+        setKnownInterestVector("正向裁剪低相似度", 0.6);
+        setKnownVector(negativeTopic, 1);
+        setKnownInterestVector("负向裁剪低相似度", 0.5);
+        setKnownInterestVector("负向裁剪高相似度", 0.8);
+
+        const positiveScore = await rater.scoreTopic(
+            [
+                { keyword: "正向裁剪高相似度", liked: true },
+                { keyword: "正向裁剪低相似度", liked: false }
+            ],
+            positiveTopic
+        );
+        const negativeScore = await rater.scoreTopic(
+            [
+                { keyword: "负向裁剪低相似度", liked: true },
+                { keyword: "负向裁剪高相似度", liked: false }
+            ],
+            negativeTopic
+        );
+
+        expect(positiveScore).toBe(1);
+        expect(negativeScore).toBe(-1);
     });
 
     it("should handle only positive keywords", async () => {
