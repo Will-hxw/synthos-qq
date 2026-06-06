@@ -6,19 +6,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentController } from "../controllers/AgentController";
 
-function makeReq(body: unknown): Request {
-    const handlers: Record<string, () => void> = {};
+type TestReq = Request & {
+    _emit: (event: string) => void;
+};
 
-    return {
+type TestRes = Response & {
+    _written: string[];
+    _emit: (event: string) => void;
+};
+
+function makeReq(body: unknown): TestReq {
+    const handlers: Record<string, (() => void)[]> = {};
+
+    const req: any = {
         body,
         httpVersionMajor: 1,
         on: vi.fn((event: string, cb: () => void) => {
-            handlers[event] = cb;
-        })
-    } as unknown as Request;
+            handlers[event] = handlers[event] || [];
+            handlers[event].push(cb);
+
+            return req;
+        }),
+        _emit: (event: string) => {
+            for (const handler of handlers[event] || []) {
+                handler();
+            }
+        }
+    };
+
+    return req as TestReq;
 }
 
-function makeRes(): Response & { _written: string[] } {
+function makeRes(): TestRes {
+    const handlers: Record<string, (() => void)[]> = {};
+
     const res: any = {
         _written: [],
         statusCode: 200,
@@ -32,6 +53,12 @@ function makeRes(): Response & { _written: string[] } {
         setHeader: vi.fn(),
         flushHeaders: vi.fn(),
         json: vi.fn(),
+        on: vi.fn((event: string, cb: () => void) => {
+            handlers[event] = handlers[event] || [];
+            handlers[event].push(cb);
+
+            return res;
+        }),
         write: vi.fn(function (this: any, chunk: string) {
             this._written.push(chunk);
 
@@ -41,7 +68,12 @@ function makeRes(): Response & { _written: string[] } {
             this.writableEnded = true;
 
             return this;
-        })
+        }),
+        _emit: (event: string) => {
+            for (const handler of handlers[event] || []) {
+                handler();
+            }
+        }
     };
 
     return res;
@@ -81,16 +113,15 @@ describe("AgentController.askStream", () => {
 
     it("流式处理超时应中止并释放对话锁，发出 error 帧", async () => {
         let capturedAbortSignal: AbortSignal | undefined;
-        // askAgentStream 永不自行结束，只在 abort 时 reject，模拟挂起的 LLM 链路
         const agentService = {
             tryAcquireConversationLock: vi.fn().mockReturnValue(true),
             releaseConversationLock: vi.fn(),
             askAgentStream: vi.fn((_input: unknown, opts: { abortSignal: AbortSignal }) => {
                 capturedAbortSignal = opts.abortSignal;
 
-                return new Promise((_resolve, reject) => {
+                return new Promise<void>(resolve => {
                     opts.abortSignal.addEventListener("abort", () => {
-                        reject(new Error("aborted"));
+                        resolve();
                     });
                 });
             })
@@ -112,5 +143,110 @@ describe("AgentController.askStream", () => {
         expect(errorFrame).toBeTruthy();
         expect(errorFrame).toContain("处理超时");
         expect(res.end).toHaveBeenCalled();
+    });
+
+    it("请求 close 不应中止 SSE 流", async () => {
+        let capturedAbortSignal: AbortSignal | undefined;
+        let emitDone: (() => void) | undefined;
+        let resolveStream: (() => void) | undefined;
+        const agentService = {
+            tryAcquireConversationLock: vi.fn().mockReturnValue(true),
+            releaseConversationLock: vi.fn(),
+            askAgentStream: vi.fn((_input: unknown, opts: { abortSignal: AbortSignal; onEvent: (evt: any) => void }) => {
+                capturedAbortSignal = opts.abortSignal;
+                emitDone = () => {
+                    opts.onEvent({
+                        type: "done",
+                        ts: Date.now(),
+                        conversationId: "conv-3",
+                        messageId: "msg-3",
+                        content: "完成",
+                        toolsUsed: [],
+                        toolRounds: 0
+                    });
+                };
+
+                return new Promise<void>(resolve => {
+                    resolveStream = resolve;
+                });
+            })
+        };
+        const controller = new AgentController(agentService as any);
+        const req = makeReq({ question: "你好", conversationId: "conv-3" });
+        const res = makeRes();
+
+        const promise = controller.askStream(req, res);
+
+        await Promise.resolve();
+        req._emit("close");
+
+        expect(capturedAbortSignal?.aborted).toBe(false);
+        expect(agentService.releaseConversationLock).not.toHaveBeenCalled();
+
+        emitDone?.();
+        resolveStream?.();
+        await promise;
+
+        expect(res._written.join("")).toContain("event: done");
+        expect(res.end).toHaveBeenCalled();
+        expect(agentService.releaseConversationLock).toHaveBeenCalledWith("conv-3");
+    });
+
+    it("响应 close 且未正常结束时应中止下游流并释放对话锁", async () => {
+        let capturedAbortSignal: AbortSignal | undefined;
+        let resolveStream: (() => void) | undefined;
+        const agentService = {
+            tryAcquireConversationLock: vi.fn().mockReturnValue(true),
+            releaseConversationLock: vi.fn(),
+            askAgentStream: vi.fn((_input: unknown, opts: { abortSignal: AbortSignal }) => {
+                capturedAbortSignal = opts.abortSignal;
+
+                return new Promise<void>(resolve => {
+                    resolveStream = resolve;
+                });
+            })
+        };
+        const controller = new AgentController(agentService as any);
+        const req = makeReq({ question: "你好", conversationId: "conv-4" });
+        const res = makeRes();
+
+        const promise = controller.askStream(req, res);
+
+        await Promise.resolve();
+        res._emit("close");
+
+        expect(capturedAbortSignal?.aborted).toBe(true);
+
+        resolveStream?.();
+        await promise;
+
+        expect(agentService.releaseConversationLock).toHaveBeenCalledWith("conv-4");
+    });
+
+    it("正常 done 事件应结束响应并释放对话锁", async () => {
+        const agentService = {
+            tryAcquireConversationLock: vi.fn().mockReturnValue(true),
+            releaseConversationLock: vi.fn(),
+            askAgentStream: vi.fn(async (_input: unknown, opts: { onEvent: (evt: any) => void }) => {
+                opts.onEvent({
+                    type: "done",
+                    ts: Date.now(),
+                    conversationId: "conv-5",
+                    messageId: "msg-5",
+                    content: "完成",
+                    toolsUsed: [],
+                    toolRounds: 0
+                });
+            })
+        };
+        const controller = new AgentController(agentService as any);
+        const req = makeReq({ question: "你好", conversationId: "conv-5" });
+        const res = makeRes();
+
+        await controller.askStream(req, res);
+
+        expect(res._written.join("")).toContain("event: done");
+        expect(res.end).toHaveBeenCalled();
+        expect(agentService.releaseConversationLock).toHaveBeenCalledWith("conv-5");
     });
 });

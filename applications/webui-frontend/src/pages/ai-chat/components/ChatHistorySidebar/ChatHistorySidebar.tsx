@@ -15,6 +15,7 @@ import { SessionGroup } from "./SessionGroup";
 
 import { deleteSession, getSessionList, updateSessionTitle, toggleSessionPin } from "@/api/ragChatHistoryApi";
 import { getAgentConversations, AgentConversation } from "@/api/agentApi";
+import { Notification } from "@/util/Notification";
 
 const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     selectedSessionId,
@@ -291,6 +292,12 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     // 新建会话的处理
     const handleNewChat = () => {
         onNewSession();
+        if (activeTab === "agent") {
+            Notification.success({
+                title: "已进入新对话草稿",
+                description: "发送第一条消息后会自动保存到历史会话"
+            });
+        }
         if (mobile && onMobileDrawerChange) {
             onMobileDrawerChange(false);
         }

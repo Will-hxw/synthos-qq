@@ -87,9 +87,11 @@ export class AgentController {
         // 立即输出一个 comment，确保中间层尽快收到字节，避免首 token 慢导致超时
         res.write(`: connected ${Date.now()}\n\n`);
 
+        let responseClosedEarly = false;
+
         // 心跳：防止某些代理/隧道在长时间无数据时主动断开
         const heartbeatTimer = setInterval(() => {
-            if (res.writableEnded) {
+            if (res.writableEnded || responseClosedEarly) {
                 return;
             }
             res.write(`: ping ${Date.now()}\n\n`);
@@ -97,17 +99,11 @@ export class AgentController {
 
         const abortController = new AbortController();
 
-        // 整体超时兜底：LLM/工具链路若长时间挂起，定时中止并释放对话锁，
-        // 避免 finally 永不触发导致 conversationId 锁泄漏、该对话再也无法发起新请求。
         let timedOut = false;
         const STREAM_TIMEOUT_MS = 5 * 60 * 1000;
-        const timeoutTimer = setTimeout(() => {
-            timedOut = true;
-            abortController.abort();
-        }, STREAM_TIMEOUT_MS);
 
         const writeEvent = (event: string, data: unknown) => {
-            if (res.writableEnded) {
+            if (res.writableEnded || responseClosedEarly) {
                 return;
             }
 
@@ -116,8 +112,32 @@ export class AgentController {
             res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
 
-        // 连接关闭时终止
-        req.on("close", () => {
+        const writeTimeoutError = () => {
+            writeEvent("error", {
+                type: "error",
+                ts: Date.now(),
+                conversationId,
+                error: `处理超时（超过 ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒），已自动中止`
+            });
+            if (!res.writableEnded && !responseClosedEarly) {
+                res.end();
+            }
+        };
+
+        // 整体超时兜底：LLM/工具链路若长时间挂起，主动结束 SSE 并释放对话锁。
+        const timeoutTimer = setTimeout(() => {
+            timedOut = true;
+            writeTimeoutError();
+            abortController.abort();
+        }, STREAM_TIMEOUT_MS);
+
+        // POST 请求体读完也会触发 req close；只有响应连接提前关闭才代表客户端断开 SSE。
+        res.on("close", () => {
+            if (res.writableEnded) {
+                return;
+            }
+
+            responseClosedEarly = true;
             abortController.abort();
         });
 
@@ -144,19 +164,21 @@ export class AgentController {
                 }
             );
         } catch (e) {
-            const msg = timedOut
-                ? `处理超时（超过 ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒），已自动中止`
-                : e instanceof Error
-                  ? e.message
-                  : String(e);
+            if (!res.writableEnded && !responseClosedEarly) {
+                const msg = timedOut
+                    ? `处理超时（超过 ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒），已自动中止`
+                    : e instanceof Error
+                      ? e.message
+                      : String(e);
 
-            writeEvent("error", {
-                type: "error",
-                ts: Date.now(),
-                conversationId,
-                error: msg
-            });
-            res.end();
+                writeEvent("error", {
+                    type: "error",
+                    ts: Date.now(),
+                    conversationId,
+                    error: msg
+                });
+                res.end();
+            }
         } finally {
             clearTimeout(timeoutTimer);
             clearInterval(heartbeatTimer);
