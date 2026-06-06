@@ -2,7 +2,7 @@ import "reflect-metadata";
 import type { JsonSchema7Type } from "zod-to-json-schema";
 
 import { readFile, writeFile, access } from "fs/promises";
-import { dirname, join } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 
 import { injectable } from "tsyringe";
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -13,13 +13,20 @@ import { deepMerge } from "../../util/core/deepMerge";
 
 import { GlobalConfig, GlobalConfigSchema, PartialGlobalConfig } from "./schemas/GlobalConfig";
 
+interface LoadedConfig {
+    configPath: string;
+    config: GlobalConfig;
+}
+
 @injectable()
 class ConfigManagerService {
     private configPath: Promise<string>;
 
     constructor() {
         if (process.env.SYNTHOS_CONFIG_PATH) {
-            this.configPath = Promise.resolve(process.env.SYNTHOS_CONFIG_PATH);
+            const envConfigPath = process.env.SYNTHOS_CONFIG_PATH;
+
+            this.configPath = Promise.resolve(isAbsolute(envConfigPath) ? envConfigPath : resolve(envConfigPath));
         } else {
             // 从当前目录开始逐层向上层查找synthos_config.json文件
             const absolutePath = findFileUpwards("synthos_config.json");
@@ -54,6 +61,24 @@ class ConfigManagerService {
      * 获取当前合并后的配置
      */
     public async getCurrentConfig(): Promise<GlobalConfig> {
+        const { configPath, config } = await this._loadCurrentConfig();
+
+        return this._resolveRuntimePaths(config, configPath);
+    }
+
+    /**
+     * 获取当前合并后的原始配置，用于配置面板编辑，不解析路径字段。
+     */
+    public async getCurrentRawConfig(): Promise<GlobalConfig> {
+        const { config } = await this._loadCurrentConfig();
+
+        return config;
+    }
+
+    /**
+     * 读取并校验主配置与 override 合并后的配置。
+     */
+    private async _loadCurrentConfig(): Promise<LoadedConfig> {
         const configPath = await this.configPath;
 
         ASSERT(configPath, "未找到配置文件");
@@ -87,7 +112,10 @@ class ConfigManagerService {
             throw new Error(`配置文件schema完整性校验失败:\n${errors}`);
         }
 
-        return parsed.data as GlobalConfig;
+        return {
+            configPath,
+            config: parsed.data as GlobalConfig
+        };
     }
 
     /**
@@ -211,6 +239,64 @@ class ConfigManagerService {
             success: false,
             errors: result.error.errors.map(e => `${e.path.join(".")}: ${e.message}`)
         };
+    }
+
+    private _resolveRuntimePaths(config: GlobalConfig, configPath: string): GlobalConfig {
+        const configDir = dirname(configPath);
+        const resolveConfigPath = (value: string): string => this._resolvePathFromConfigDir(value, configDir);
+
+        return {
+            ...config,
+            dataProviders: {
+                ...config.dataProviders,
+                QQ: {
+                    ...config.dataProviders.QQ,
+                    VFSExtPath: resolveConfigPath(config.dataProviders.QQ.VFSExtPath),
+                    dbBasePath: resolveConfigPath(config.dataProviders.QQ.dbBasePath)
+                }
+            },
+            preprocessors: {
+                ...config.preprocessors,
+                AccumulativeSplitter: {
+                    ...config.preprocessors.AccumulativeSplitter,
+                    persistentKVStorePath: resolveConfigPath(
+                        config.preprocessors.AccumulativeSplitter.persistentKVStorePath
+                    )
+                }
+            },
+            ai: {
+                ...config.ai,
+                embedding: {
+                    ...config.ai.embedding,
+                    vectorDBPath: resolveConfigPath(config.ai.embedding.vectorDBPath)
+                }
+            },
+            webUI_Backend: {
+                ...config.webUI_Backend,
+                kvStoreBasePath: resolveConfigPath(config.webUI_Backend.kvStoreBasePath),
+                dbBasePath: resolveConfigPath(config.webUI_Backend.dbBasePath)
+            },
+            commonDatabase: {
+                ...config.commonDatabase,
+                dbBasePath: resolveConfigPath(config.commonDatabase.dbBasePath),
+                ftsDatabase: {
+                    ...config.commonDatabase.ftsDatabase,
+                    imMessageDBPath: resolveConfigPath(config.commonDatabase.ftsDatabase.imMessageDBPath)
+                }
+            },
+            logger: {
+                ...config.logger,
+                logDirectory: resolveConfigPath(config.logger.logDirectory)
+            }
+        };
+    }
+
+    private _resolvePathFromConfigDir(value: string, configDir: string): string {
+        if (isAbsolute(value)) {
+            return value;
+        }
+
+        return resolve(configDir, value);
     }
 }
 

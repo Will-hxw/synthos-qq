@@ -1,4 +1,4 @@
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -345,6 +345,101 @@ describe("ConfigManagerService", () => {
             expect(config.logger.logDirectory).toBe("/logs"); // 保持原值
             expect(config.dataProviders.QQ.dbKey).toBe("override-key"); // 嵌套属性被覆盖
             expect(config.dataProviders.QQ.VFSExtPath).toBe("/path/to/vfs"); // 嵌套属性保持原值
+        });
+
+        it("应将相对路径解析为相对于配置文件所在目录的绝对路径", async () => {
+            const configRoot = join(process.cwd(), "runtime-config");
+            const configPath = join(configRoot, "synthos_config.json");
+            const relativeConfig = {
+                ...mockMainConfig,
+                dataProviders: {
+                    QQ: {
+                        ...mockMainConfig.dataProviders.QQ,
+                        VFSExtPath: "assets/sqlite_vfs_plugins/win_x86/sqlite_ext_ntqq_db.dll",
+                        dbBasePath: "qq-db"
+                    }
+                },
+                preprocessors: {
+                    ...mockMainConfig.preprocessors,
+                    AccumulativeSplitter: {
+                        ...mockMainConfig.preprocessors.AccumulativeSplitter,
+                        persistentKVStorePath: "data/splitter-kv"
+                    }
+                },
+                ai: {
+                    ...mockMainConfig.ai,
+                    embedding: {
+                        ...mockMainConfig.ai.embedding,
+                        vectorDBPath: "data/vectors.db"
+                    }
+                },
+                webUI_Backend: {
+                    ...mockMainConfig.webUI_Backend,
+                    kvStoreBasePath: "data/kv-store",
+                    dbBasePath: "data"
+                },
+                commonDatabase: {
+                    ...mockMainConfig.commonDatabase,
+                    dbBasePath: "data",
+                    ftsDatabase: {
+                        imMessageDBPath: "data/fts_messages.db"
+                    }
+                },
+                logger: {
+                    ...mockMainConfig.logger,
+                    logDirectory: "logs"
+                }
+            };
+
+            process.env.SYNTHOS_CONFIG_PATH = configPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(relativeConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.dataProviders.QQ.VFSExtPath).toBe(
+                resolve(configRoot, "assets/sqlite_vfs_plugins/win_x86/sqlite_ext_ntqq_db.dll")
+            );
+            expect(config.dataProviders.QQ.dbBasePath).toBe(resolve(configRoot, "qq-db"));
+            expect(config.preprocessors.AccumulativeSplitter.persistentKVStorePath).toBe(
+                resolve(configRoot, "data/splitter-kv")
+            );
+            expect(config.ai.embedding.vectorDBPath).toBe(resolve(configRoot, "data/vectors.db"));
+            expect(config.webUI_Backend.kvStoreBasePath).toBe(resolve(configRoot, "data/kv-store"));
+            expect(config.webUI_Backend.dbBasePath).toBe(resolve(configRoot, "data"));
+            expect(config.commonDatabase.dbBasePath).toBe(resolve(configRoot, "data"));
+            expect(config.commonDatabase.ftsDatabase.imMessageDBPath).toBe(
+                resolve(configRoot, "data/fts_messages.db")
+            );
+            expect(config.logger.logDirectory).toBe(resolve(configRoot, "logs"));
+        });
+
+        it("获取原始合并配置时应保留相对路径", async () => {
+            const configPath = join(process.cwd(), "runtime-config", "synthos_config.json");
+            const relativeConfig = {
+                ...mockMainConfig,
+                commonDatabase: {
+                    ...mockMainConfig.commonDatabase,
+                    dbBasePath: "data",
+                    ftsDatabase: {
+                        imMessageDBPath: "data/fts_messages.db"
+                    }
+                },
+                logger: {
+                    ...mockMainConfig.logger,
+                    logDirectory: "logs"
+                }
+            };
+
+            process.env.SYNTHOS_CONFIG_PATH = configPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(relativeConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentRawConfig();
+
+            expect(config.commonDatabase.dbBasePath).toBe("data");
+            expect(config.commonDatabase.ftsDatabase.imMessageDBPath).toBe("data/fts_messages.db");
+            expect(config.logger.logDirectory).toBe("logs");
         });
     });
 

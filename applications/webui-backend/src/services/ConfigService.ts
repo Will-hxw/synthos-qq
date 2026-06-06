@@ -25,10 +25,10 @@ export class ConfigService {
     }
 
     /**
-     * 获取当前合并后的配置
+     * 获取当前合并后的原始配置，供配置面板编辑。
      */
     async getCurrentConfig(): Promise<GlobalConfig> {
-        return this.configManagerService.getCurrentConfig();
+        return this.configManagerService.getCurrentRawConfig();
     }
 
     /**
