@@ -237,6 +237,14 @@ export const AgentGetMessagesInputSchema = z.object({
     limit: z.number().int().positive().default(20)
 });
 
+export const AgentConversationIdInputSchema = z.object({
+    conversationId: z.string().min(1, "conversationId 不能为空")
+});
+
+export const AgentUpdateConversationTitleInputSchema = AgentConversationIdInputSchema.extend({
+    title: z.string().trim().min(1, "标题不能为空")
+});
+
 export const AgentGetConversationsOutputSchema = z.array(AgentConversationItemSchema);
 export const AgentGetMessagesOutputSchema = z.array(AgentMessageItemSchema);
 
@@ -273,5 +281,7 @@ export type AgentConversationItem = z.infer<typeof AgentConversationItemSchema>;
 export type AgentMessageItem = z.infer<typeof AgentMessageItemSchema>;
 export type AgentGetConversationsInput = z.infer<typeof AgentGetConversationsInputSchema>;
 export type AgentGetMessagesInput = z.infer<typeof AgentGetMessagesInputSchema>;
+export type AgentConversationIdInput = z.infer<typeof AgentConversationIdInputSchema>;
+export type AgentUpdateConversationTitleInput = z.infer<typeof AgentUpdateConversationTitleInputSchema>;
 export type AgentGetConversationsOutput = z.infer<typeof AgentGetConversationsOutputSchema>;
 export type AgentGetMessagesOutput = z.infer<typeof AgentGetMessagesOutputSchema>;

@@ -9,7 +9,7 @@ import API_BASE_URL from "./constants/baseUrl";
 
 import fetchWrapper from "@/util/fetchWrapper";
 import { mockConfig } from "@/config/mock";
-import { mockAgentAsk, mockAgentAskStream, mockGetAgentConversations, mockGetAgentMessages } from "@/mock/agentMock";
+import { mockAgentAsk, mockAgentAskStream, mockGetAgentConversations, mockGetAgentMessages, mockUpdateAgentConversationTitle, mockDeleteAgentConversation } from "@/mock/agentMock";
 
 // 导出类型供mock和组件使用
 export type { AgentMessage, AgentConversation, AgentAskRequest, AgentAskResponse, AgentEvent };
@@ -268,6 +268,42 @@ export const getAgentMessages = async (conversationId: string, beforeTimestamp: 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ beforeTimestamp, limit })
+    });
+
+    return response.json();
+};
+
+/**
+ * 更新 Agent 对话标题
+ * @param conversationId 对话ID
+ * @param title 新标题
+ */
+export const updateAgentConversationTitle = async (conversationId: string, title: string): Promise<ApiResponse<void>> => {
+    if (mockConfig.agent) {
+        return mockUpdateAgentConversationTitle(conversationId, title);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/agent/conversations/${encodeURIComponent(conversationId)}/update-title`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+    });
+
+    return response.json();
+};
+
+/**
+ * 删除 Agent 对话
+ * @param conversationId 对话ID
+ */
+export const deleteAgentConversation = async (conversationId: string): Promise<ApiResponse<void>> => {
+    if (mockConfig.agent) {
+        return mockDeleteAgentConversation(conversationId);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/agent/conversations/${encodeURIComponent(conversationId)}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
     });
 
     return response.json();

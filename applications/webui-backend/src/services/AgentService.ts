@@ -246,4 +246,20 @@ export class AgentService {
             } as AgentMessage;
         });
     }
+
+    /**
+     * 更新 Agent 对话标题
+     */
+    public async updateConversationTitle(conversationId: string, title: string): Promise<void> {
+        this.LOGGER.info(`更新 Agent 对话标题, conversationId: ${conversationId}`);
+        await this.ragClient.agentUpdateConversationTitle.mutate({ conversationId, title });
+    }
+
+    /**
+     * 删除 Agent 对话
+     */
+    public async deleteConversation(conversationId: string): Promise<void> {
+        this.LOGGER.info(`删除 Agent 对话, conversationId: ${conversationId}`);
+        await this.ragClient.agentDeleteConversation.mutate({ conversationId });
+    }
 }

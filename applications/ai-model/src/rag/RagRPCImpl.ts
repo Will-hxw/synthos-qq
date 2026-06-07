@@ -454,6 +454,22 @@ export class RagRPCImpl implements RAGRPCImplementation {
     }
 
     /**
+     * 更新 Agent 对话标题
+     */
+    public async agentUpdateConversationTitle(input: { conversationId: string; title: string }): Promise<void> {
+        this.LOGGER.info(`更新 Agent 对话标题: conversationId=${input.conversationId}`);
+        await this.agentDB.updateConversationTitle(input.conversationId, input.title);
+    }
+
+    /**
+     * 删除 Agent 对话
+     */
+    public async agentDeleteConversation(input: { conversationId: string }): Promise<void> {
+        this.LOGGER.info(`删除 Agent 对话: conversationId=${input.conversationId}`);
+        await this.agentDB.deleteConversation(input.conversationId);
+    }
+
+    /**
      * 扩展查询，失败时降级为仅使用原始问题。
      * Multi-Query 是召回增强的可选优化，重写失败不应中断整个问答；
      * 此时退回到单查询检索，保证基础检索仍可用。

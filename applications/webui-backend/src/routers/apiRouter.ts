@@ -325,4 +325,16 @@ export const setupApiRoutes = (app: Express): void => {
         "/api/agent/conversations/:id/messages",
         asyncHandler((req, res) => agentController.getMessages(req, res))
     );
+
+    // 更新对话标题
+    app.post(
+        "/api/agent/conversations/:id/update-title",
+        asyncHandler((req, res) => agentController.updateConversationTitle(req, res))
+    );
+
+    // 删除对话
+    app.post(
+        "/api/agent/conversations/:id/delete",
+        asyncHandler((req, res) => agentController.deleteConversation(req, res))
+    );
 };

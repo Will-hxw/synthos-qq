@@ -409,3 +409,56 @@ export const mockGetAgentMessages = async (conversationId: string, beforeTimesta
         message: ""
     };
 };
+
+/**
+ * 模拟更新 Agent 对话标题
+ */
+export const mockUpdateAgentConversationTitle = async (conversationId: string, title: string): Promise<ApiResponse<void>> => {
+    await delay(200 + Math.random() * 150);
+
+    const conversation = mockConversations.find(c => c.id === conversationId);
+
+    if (!conversation) {
+        return {
+            success: false,
+            data: undefined as unknown as void,
+            message: "对话不存在"
+        };
+    }
+
+    conversation.title = title;
+    conversation.updatedAt = now();
+    mockConversations.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    return {
+        success: true,
+        data: undefined as unknown as void,
+        message: ""
+    };
+};
+
+/**
+ * 模拟删除 Agent 对话
+ */
+export const mockDeleteAgentConversation = async (conversationId: string): Promise<ApiResponse<void>> => {
+    await delay(200 + Math.random() * 150);
+
+    const index = mockConversations.findIndex(c => c.id === conversationId);
+
+    if (index === -1) {
+        return {
+            success: false,
+            data: undefined as unknown as void,
+            message: "对话不存在"
+        };
+    }
+
+    mockConversations.splice(index, 1);
+    delete mockMessagesByConversationId[conversationId];
+
+    return {
+        success: true,
+        data: undefined as unknown as void,
+        message: ""
+    };
+};

@@ -14,7 +14,7 @@ import { AgentConversationList } from "./AgentConversationList";
 import { SessionGroup } from "./SessionGroup";
 
 import { deleteSession, getSessionList, updateSessionTitle, toggleSessionPin } from "@/api/ragChatHistoryApi";
-import { getAgentConversations, AgentConversation } from "@/api/agentApi";
+import { deleteAgentConversation, getAgentConversations, updateAgentConversationTitle, AgentConversation } from "@/api/agentApi";
 import { Notification } from "@/util/Notification";
 
 const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
@@ -45,6 +45,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     const [agentConversations, setAgentConversations] = useState<AgentConversation[]>([]);
     const [agentLoading, setAgentLoading] = useState(false);
     const [agentHasMore, setAgentHasMore] = useState(false);
+    const [editingAgentConversationId, setEditingAgentConversationId] = useState<string | null>(null);
+    const [editingAgentConversationTitle, setEditingAgentConversationTitle] = useState("");
     const sessionsLengthRef = useRef(0);
 
     const PAGE_SIZE = 20;
@@ -249,6 +251,65 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         setEditingTitle("");
     };
 
+    // 开始编辑 Agent 对话标题
+    const handleStartAgentConversationEdit = (conversation: AgentConversation) => {
+        setEditingAgentConversationId(conversation.id);
+        setEditingAgentConversationTitle(conversation.title || "未命名对话");
+    };
+
+    // 保存 Agent 对话标题
+    const handleSaveAgentConversationTitle = async (conversationId: string) => {
+        const title = editingAgentConversationTitle.trim();
+
+        if (!title) {
+            return;
+        }
+
+        try {
+            const response = await updateAgentConversationTitle(conversationId, title);
+
+            if (response.success) {
+                setAgentConversations(prev => prev.map(c => (c.id === conversationId ? { ...c, title } : c)));
+            } else {
+                Notification.error({ title: "更新失败", description: response.message || "Agent 对话标题更新失败" });
+            }
+        } catch (error) {
+            console.error("更新 Agent 对话标题失败:", error);
+            Notification.error({ title: "更新失败", description: error instanceof Error ? error.message : String(error) });
+        } finally {
+            setEditingAgentConversationId(null);
+            setEditingAgentConversationTitle("");
+        }
+    };
+
+    // 取消编辑 Agent 对话标题
+    const handleCancelAgentConversationEdit = () => {
+        setEditingAgentConversationId(null);
+        setEditingAgentConversationTitle("");
+    };
+
+    // 删除 Agent 对话
+    const handleDeleteAgentConversation = async (conversationId: string) => {
+        try {
+            const response = await deleteAgentConversation(conversationId);
+
+            if (response.success) {
+                setAgentConversations(prev => prev.filter(c => c.id !== conversationId));
+                if (editingAgentConversationId === conversationId) {
+                    handleCancelAgentConversationEdit();
+                }
+                if (selectedAgentConversationId === conversationId) {
+                    onSelectAgentConversation?.(undefined);
+                }
+            } else {
+                Notification.error({ title: "删除失败", description: response.message || "Agent 对话删除失败" });
+            }
+        } catch (error) {
+            console.error("删除 Agent 对话失败:", error);
+            Notification.error({ title: "删除失败", description: error instanceof Error ? error.message : String(error) });
+        }
+    };
+
     // 切换置顶状态
     const handleTogglePin = async (sessionId: string) => {
         try {
@@ -359,9 +420,16 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                             agentConversations={agentConversations}
                             agentHasMore={agentHasMore}
                             agentLoading={agentLoading}
+                            editingConversationId={editingAgentConversationId}
+                            editingConversationTitle={editingAgentConversationTitle}
                             selectedAgentConversationId={selectedAgentConversationId}
+                            onCancelEditConversation={handleCancelAgentConversationEdit}
+                            onDeleteConversation={handleDeleteAgentConversation}
+                            onEditingConversationTitleChange={setEditingAgentConversationTitle}
                             onLoadMore={() => loadAgentConversations(true, agentConversations[agentConversations.length - 1]?.updatedAt)}
+                            onSaveEditConversation={handleSaveAgentConversationTitle}
                             onSelectAgentConversation={onSelectAgentConversation}
+                            onStartEditConversation={handleStartAgentConversationEdit}
                         />
                     ) : loading && sessions.length === 0 ? (
                         <div className="flex justify-center py-8">

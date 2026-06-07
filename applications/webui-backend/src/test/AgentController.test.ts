@@ -15,11 +15,12 @@ type TestRes = Response & {
     _emit: (event: string) => void;
 };
 
-function makeReq(body: unknown): TestReq {
+function makeReq(body: unknown, params: Record<string, string> = {}): TestReq {
     const handlers: Record<string, (() => void)[]> = {};
 
     const req: any = {
         body,
+        params,
         httpVersionMajor: 1,
         on: vi.fn((event: string, cb: () => void) => {
             handlers[event] = handlers[event] || [];
@@ -152,24 +153,26 @@ describe("AgentController.askStream", () => {
         const agentService = {
             tryAcquireConversationLock: vi.fn().mockReturnValue(true),
             releaseConversationLock: vi.fn(),
-            askAgentStream: vi.fn((_input: unknown, opts: { abortSignal: AbortSignal; onEvent: (evt: any) => void }) => {
-                capturedAbortSignal = opts.abortSignal;
-                emitDone = () => {
-                    opts.onEvent({
-                        type: "done",
-                        ts: Date.now(),
-                        conversationId: "conv-3",
-                        messageId: "msg-3",
-                        content: "完成",
-                        toolsUsed: [],
-                        toolRounds: 0
-                    });
-                };
+            askAgentStream: vi.fn(
+                (_input: unknown, opts: { abortSignal: AbortSignal; onEvent: (evt: any) => void }) => {
+                    capturedAbortSignal = opts.abortSignal;
+                    emitDone = () => {
+                        opts.onEvent({
+                            type: "done",
+                            ts: Date.now(),
+                            conversationId: "conv-3",
+                            messageId: "msg-3",
+                            content: "完成",
+                            toolsUsed: [],
+                            toolRounds: 0
+                        });
+                    };
 
-                return new Promise<void>(resolve => {
-                    resolveStream = resolve;
-                });
-            })
+                    return new Promise<void>(resolve => {
+                        resolveStream = resolve;
+                    });
+                }
+            )
         };
         const controller = new AgentController(agentService as any);
         const req = makeReq({ question: "你好", conversationId: "conv-3" });
@@ -248,5 +251,35 @@ describe("AgentController.askStream", () => {
         expect(res._written.join("")).toContain("event: done");
         expect(res.end).toHaveBeenCalled();
         expect(agentService.releaseConversationLock).toHaveBeenCalledWith("conv-5");
+    });
+});
+
+describe("AgentController conversation actions", () => {
+    it("更新 Agent 对话标题时应校验参数并调用 service", async () => {
+        const agentService = {
+            updateConversationTitle: vi.fn().mockResolvedValue(undefined)
+        };
+        const controller = new AgentController(agentService as any);
+        const req = makeReq({ title: "  新标题  " }, { id: "conv-rename" });
+        const res = makeRes();
+
+        await controller.updateConversationTitle(req, res);
+
+        expect(agentService.updateConversationTitle).toHaveBeenCalledWith("conv-rename", "新标题");
+        expect(res.json).toHaveBeenCalledWith({ success: true, message: "标题已更新" });
+    });
+
+    it("删除 Agent 对话时应调用 service", async () => {
+        const agentService = {
+            deleteConversation: vi.fn().mockResolvedValue(undefined)
+        };
+        const controller = new AgentController(agentService as any);
+        const req = makeReq({}, { id: "conv-delete" });
+        const res = makeRes();
+
+        await controller.deleteConversation(req, res);
+
+        expect(agentService.deleteConversation).toHaveBeenCalledWith("conv-delete");
+        expect(res.json).toHaveBeenCalledWith({ success: true, message: "对话已删除" });
     });
 });

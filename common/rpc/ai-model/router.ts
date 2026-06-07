@@ -27,6 +27,8 @@ import {
     AgentForkFromCheckpointOutput,
     AgentGetConversationsInputSchema,
     AgentGetMessagesInputSchema,
+    AgentConversationIdInputSchema,
+    AgentUpdateConversationTitleInputSchema,
     AgentGetConversationsOutput,
     AgentGetMessagesOutput
 } from "./schemas";
@@ -133,6 +135,16 @@ export interface RAGRPCImplementation {
         beforeTimestamp?: number;
         limit: number;
     }): Promise<AgentGetMessagesOutput>;
+
+    /**
+     * 更新 Agent 对话标题
+     */
+    agentUpdateConversationTitle(input: { conversationId: string; title: string }): Promise<void>;
+
+    /**
+     * 删除 Agent 对话
+     */
+    agentDeleteConversation(input: { conversationId: string }): Promise<void>;
 
     /**
      * 获取 LangGraph thread 的 checkpoint 历史（分页）
@@ -269,6 +281,21 @@ export const createRAGRouter = (impl: RAGRPCImplementation) => {
                 conversationId: input.conversationId,
                 beforeTimestamp: input.beforeTimestamp,
                 limit: input.limit ?? 20
+            });
+        }),
+
+        agentUpdateConversationTitle: t.procedure
+            .input(AgentUpdateConversationTitleInputSchema)
+            .mutation(async ({ input }) => {
+                await impl.agentUpdateConversationTitle({
+                    conversationId: input.conversationId,
+                    title: input.title
+                });
+            }),
+
+        agentDeleteConversation: t.procedure.input(AgentConversationIdInputSchema).mutation(async ({ input }) => {
+            await impl.agentDeleteConversation({
+                conversationId: input.conversationId
             });
         }),
 

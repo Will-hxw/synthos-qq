@@ -17,7 +17,9 @@ import {
     AgentForkFromCheckpointRequestSchema,
     AgentGetConversationsSchema,
     AgentGetMessagesSchema,
-    AgentGetStateHistoryRequestSchema
+    AgentGetStateHistoryRequestSchema,
+    AgentConversationIdSchema,
+    AgentUpdateConversationTitleSchema
 } from "../schemas/index";
 
 @injectable()
@@ -218,6 +220,33 @@ export class AgentController {
         );
 
         res.json({ success: true, data: messages });
+    }
+
+    /**
+     * POST /api/agent/conversations/:id/update-title
+     * 更新对话标题
+     */
+    public async updateConversationTitle(req: Request, res: Response): Promise<void> {
+        const params = AgentUpdateConversationTitleSchema.parse({
+            conversationId: req.params.id,
+            title: req.body?.title
+        });
+
+        await this.agentService.updateConversationTitle(params.conversationId, params.title);
+        res.json({ success: true, message: "标题已更新" });
+    }
+
+    /**
+     * POST /api/agent/conversations/:id/delete
+     * 删除对话
+     */
+    public async deleteConversation(req: Request, res: Response): Promise<void> {
+        const params = AgentConversationIdSchema.parse({
+            conversationId: req.params.id
+        });
+
+        await this.agentService.deleteConversation(params.conversationId);
+        res.json({ success: true, message: "对话已删除" });
     }
 
     /**

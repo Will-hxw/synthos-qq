@@ -221,6 +221,32 @@ describe("RagRPCImpl", () => {
         expect(agentDB.addMessage).toHaveBeenCalledTimes(2);
     });
 
+    it("Agent 对话标题更新与删除应委托给数据库服务", async () => {
+        const agentDB = {
+            updateConversationTitle: vi.fn().mockResolvedValue(undefined),
+            deleteConversation: vi.fn().mockResolvedValue(undefined)
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            agentDB as any,
+            {} as any
+        );
+
+        await rpcImpl.agentUpdateConversationTitle({ conversationId: "conversation-1", title: "新标题" });
+        await rpcImpl.agentDeleteConversation({ conversationId: "conversation-1" });
+
+        expect(agentDB.updateConversationTitle).toHaveBeenCalledWith("conversation-1", "新标题");
+        expect(agentDB.deleteConversation).toHaveBeenCalledWith("conversation-1");
+    });
+
     it("Multi-Query 扩展失败时应降级为仅使用原始问题，不抛错中断", async () => {
         const rpcImpl = new RagRPCImpl(
             {} as any,

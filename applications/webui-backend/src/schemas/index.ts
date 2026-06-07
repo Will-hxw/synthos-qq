@@ -287,3 +287,13 @@ export const AgentGetMessagesSchema = z.object({
     limit: z.number().int().positive().default(20)
 });
 export type AgentGetMessagesParams = z.infer<typeof AgentGetMessagesSchema>;
+
+export const AgentConversationIdSchema = z.object({
+    conversationId: z.string({ message: "缺少conversationId参数" }).min(1, "conversationId不能为空")
+});
+export type AgentConversationIdParams = z.infer<typeof AgentConversationIdSchema>;
+
+export const AgentUpdateConversationTitleSchema = AgentConversationIdSchema.extend({
+    title: z.string({ message: "缺少title参数" }).trim().min(1, "标题不能为空")
+});
+export type AgentUpdateConversationTitleParams = z.infer<typeof AgentUpdateConversationTitleSchema>;

@@ -202,20 +202,22 @@ export class AgentDbAccessService extends Disposable {
     }
 
     /**
+     * 根据 ID 删除对话与其消息。
+     * SQLite 需要显式启用外键才会执行 ON DELETE CASCADE，这里主动删除消息以避免历史残留。
+     * @param id 对话 ID
+     */
+    public async deleteConversation(id: string): Promise<void> {
+        await this.db.run(`DELETE FROM agent_messages WHERE conversation_id = ?`, [id]);
+        await this.db.run(`DELETE FROM agent_conversations WHERE id = ?`, [id]);
+        this.LOGGER.info(`删除对话: ${id}`);
+    }
+
+    /**
      * 更新对话的更新时间
      * @param id 对话 ID
      */
     public async touchConversation(id: string): Promise<void> {
         await this.db.run(`UPDATE agent_conversations SET updated_at = ? WHERE id = ?`, [Date.now(), id]);
-    }
-
-    /**
-     * 删除对话（级联删除消息）
-     * @param id 对话 ID
-     */
-    public async deleteConversation(id: string): Promise<void> {
-        await this.db.run(`DELETE FROM agent_conversations WHERE id = ?`, [id]);
-        this.LOGGER.info(`删除对话: ${id}`);
     }
 
     /**
