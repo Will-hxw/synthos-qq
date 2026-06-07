@@ -1,8 +1,14 @@
 // @ts-check
 
+/**
+ * @param {string} commit
+ * @returns {boolean}
+ */
+const isInitCommit = commit => commit.includes("init");
+
 /** @type {import("@commitlint/types").UserConfig} */
 export default {
-    ignores: [commit => commit.includes("init")],
+    ignores: [isInitCommit],
     extends: ["@commitlint/config-conventional"],
     rules: {
         "body-leading-blank": [2, "always"],
