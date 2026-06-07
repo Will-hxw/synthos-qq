@@ -1,7 +1,7 @@
 /**
  * SQL 查询工具
  * 允许 Agent 直接查询聊天记录数据库
- * 注意：当前版本未实现安全限制，仅用于演示
+ * 注意：仅允许执行只读 SELECT 查询
  */
 import { injectable, inject } from "tsyringe";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
@@ -103,7 +103,8 @@ export class SQLQueryTool {
             function: {
                 name: "sql_query",
                 description:
-                    "直接查询聊天记录数据库。可用于统计分析、精确查询等场景。\n" +
+                    "直接查询聊天记录数据库。仅用于统计分析、精确查询等需要结构化 SQL 的场景。\n" +
+                    "query 必须是以 SELECT 开头的完整 SQL 语句；自然语言检索、关键词搜索、语义查询必须使用 rag_search。\n" +
                     "数据库表结构：\n" +
                     "- chat_messages: 聊天消息表，包含字段 msgId, messageContent, groupId, timestamp, senderId, senderGroupNickname, senderNickname 等\n" +
                     "注意：仅支持 SELECT 查询，不支持 UPDATE/DELETE/DROP 等操作",
@@ -113,7 +114,7 @@ export class SQLQueryTool {
                         query: {
                             type: "string",
                             description:
-                                "SQL SELECT 查询语句，例如：SELECT * FROM chat_messages WHERE groupId = '...' LIMIT 10"
+                                "完整 SQL SELECT 查询语句，必须以 SELECT 开头；不要传入自然语言。示例：SELECT * FROM chat_messages WHERE groupId = '...' LIMIT 10"
                         },
                         limit: {
                             type: "number",

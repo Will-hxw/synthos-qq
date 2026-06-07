@@ -7,7 +7,7 @@ import { join } from "path";
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { ChatOpenAI } from "@langchain/openai";
-import { BaseMessage } from "@langchain/core/messages";
+import { AIMessage, BaseMessage } from "@langchain/core/messages";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
 import Logger from "@root/common/util/Logger";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
@@ -18,19 +18,198 @@ import { COMMON_TOKENS } from "@root/common/di/tokens";
 import { JsonPromptStore } from "../../../context/prompts/JsonPromptStore";
 
 /**
- * DeepSeek thinking 模式需要 reason_content 在多轮对话中被回传。
- * 但 @langchain/openai@1.x 不处理该字段，因此：
- * - reasoningRegistry：按消息 content 存储上次响应的 reasoning_content
- * - createReasoningAwareFetch：自定义 fetch，在发送请求时将 reasoning_content 注入 assistant 消息
- * - 消费后立即 delete 防止内存泄漏，同时 FIFO 上限 100 作为兜底
+ * DeepSeek thinking 模式需要 reasoning_content 在多轮对话中被回传。
+ * @langchain/openai@1.x 不处理该字段，因此在自定义 fetch 中按 assistant 消息指纹补回。
  */
 const REASONING_REGISTRY_MAX_SIZE = 100;
 const reasoningRegistry = new Map<string, string>();
 
-/** 注册某条 assistant 消息对应的 reasoning_content */
-export function registerReasoningContent(messageContent: string, reasoningContent: string): void {
-    if (reasoningContent && messageContent) {
-        reasoningRegistry.set(messageContent, reasoningContent);
+interface AssistantReasoningMessagePayload {
+    content?: unknown;
+    tool_calls?: unknown[];
+}
+
+function stableSerialize(value: unknown): string {
+    if (value === undefined) {
+        return "null";
+    }
+
+    if (typeof value === "bigint") {
+        return JSON.stringify(value.toString());
+    }
+
+    if (typeof value === "function" || typeof value === "symbol") {
+        return JSON.stringify(String(value));
+    }
+
+    if (value === null || typeof value !== "object") {
+        return JSON.stringify(value) ?? "null";
+    }
+
+    if (Array.isArray(value)) {
+        return `[${value.map(item => stableSerialize(item)).join(",")}]`;
+    }
+
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+
+    return `{${keys.map(key => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(",")}}`;
+}
+
+function normalizeToolCallArguments(toolCall: Record<string, unknown>): unknown {
+    const fn =
+        toolCall.function && typeof toolCall.function === "object"
+            ? (toolCall.function as Record<string, unknown>)
+            : undefined;
+    const rawArguments = toolCall.args ?? toolCall.arguments ?? fn?.arguments ?? {};
+
+    if (typeof rawArguments === "string") {
+        try {
+            return JSON.parse(rawArguments);
+        } catch {
+            return rawArguments;
+        }
+    }
+
+    return rawArguments;
+}
+
+function normalizeToolCallForReasoning(toolCall: unknown): Record<string, unknown> {
+    const record = toolCall && typeof toolCall === "object" ? (toolCall as Record<string, unknown>) : {};
+    const fn =
+        record.function && typeof record.function === "object"
+            ? (record.function as Record<string, unknown>)
+            : undefined;
+
+    return {
+        id: typeof record.id === "string" ? record.id : "",
+        name: typeof record.name === "string" ? record.name : typeof fn?.name === "string" ? fn.name : "",
+        arguments: normalizeToolCallArguments(record)
+    };
+}
+
+export function createAssistantMessageReasoningKey(payload: AssistantReasoningMessagePayload): string {
+    const toolCalls = Array.isArray(payload.tool_calls)
+        ? payload.tool_calls.map(toolCall => normalizeToolCallForReasoning(toolCall))
+        : [];
+
+    return stableSerialize({
+        content: payload.content ?? "",
+        tool_calls: toolCalls
+    });
+}
+
+/** 注册某条 assistant 消息对应的 reasoning_content。 */
+export function registerReasoningContent(
+    message: AssistantReasoningMessagePayload | string,
+    reasoningContent: string
+): void {
+    if (!reasoningContent) {
+        return;
+    }
+
+    const key = typeof message === "string" ? message : createAssistantMessageReasoningKey(message);
+
+    if (key) {
+        reasoningRegistry.set(key, reasoningContent);
+    }
+}
+
+function trimReasoningRegistry(): void {
+    while (reasoningRegistry.size > REASONING_REGISTRY_MAX_SIZE) {
+        const firstKey = reasoningRegistry.keys().next().value as string | undefined;
+
+        if (!firstKey) {
+            break;
+        }
+        reasoningRegistry.delete(firstKey);
+    }
+}
+
+function getAssistantToolCallId(toolCall: unknown): string {
+    if (!toolCall || typeof toolCall !== "object") {
+        return "";
+    }
+
+    const id = (toolCall as Record<string, unknown>).id;
+
+    return typeof id === "string" ? id : "";
+}
+
+function validateReasoningAwareMessages(messages: unknown[]): void {
+    const errors: string[] = [];
+    const allToolCallIds = new Set<string>();
+    const outstandingToolCallIds = new Set<string>();
+    const consumedToolCallIds = new Set<string>();
+
+    for (const [index, message] of messages.entries()) {
+        if (!message || typeof message !== "object") {
+            continue;
+        }
+
+        const msg = message as Record<string, unknown>;
+
+        if (msg.role === "assistant") {
+            const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+
+            if (toolCalls.length === 0) {
+                continue;
+            }
+
+            if (typeof msg.reasoning_content !== "string" || msg.reasoning_content.length === 0) {
+                errors.push(`message[${index}] assistant tool_calls 缺少 reasoning_content`);
+            }
+
+            const idsInMessage = new Set<string>();
+
+            for (const toolCall of toolCalls) {
+                const toolCallId = getAssistantToolCallId(toolCall);
+
+                if (!toolCallId) {
+                    errors.push(`message[${index}] assistant tool_call 缺少 id`);
+                    continue;
+                }
+                if (idsInMessage.has(toolCallId)) {
+                    errors.push(`message[${index}] assistant tool_call_id 重复: ${toolCallId}`);
+                }
+                if (allToolCallIds.has(toolCallId)) {
+                    errors.push(`message[${index}] tool_call_id 全局重复: ${toolCallId}`);
+                }
+
+                idsInMessage.add(toolCallId);
+                allToolCallIds.add(toolCallId);
+                outstandingToolCallIds.add(toolCallId);
+            }
+            continue;
+        }
+
+        if (msg.role === "tool") {
+            const toolCallId = typeof msg.tool_call_id === "string" ? msg.tool_call_id : "";
+
+            if (!toolCallId) {
+                errors.push(`message[${index}] tool message 缺少 tool_call_id`);
+                continue;
+            }
+            if (consumedToolCallIds.has(toolCallId)) {
+                errors.push(`message[${index}] tool message 重复: ${toolCallId}`);
+                continue;
+            }
+            if (!outstandingToolCallIds.has(toolCallId)) {
+                errors.push(`message[${index}] tool message 孤儿: ${toolCallId}`);
+                continue;
+            }
+
+            consumedToolCallIds.add(toolCallId);
+            outstandingToolCallIds.delete(toolCallId);
+        }
+    }
+
+    if (outstandingToolCallIds.size > 0) {
+        errors.push(`assistant tool_calls 缺少对应 tool message: ${[...outstandingToolCallIds].join(", ")}`);
+    }
+
+    if (errors.length > 0) {
+        throw new Error(`Agent 请求体校验失败: ${errors.join("; ")}`);
     }
 }
 
@@ -39,37 +218,41 @@ function createReasoningAwareFetch(): typeof fetch {
 
     return async (input, init) => {
         if (init?.body && typeof init.body === "string") {
+            let body: any;
+
             try {
-                const body = JSON.parse(init.body);
+                body = JSON.parse(init.body);
+            } catch {
+                return realFetch(input, init);
+            }
 
-                if (body.messages && Array.isArray(body.messages)) {
-                    body.messages = body.messages.map((msg: Record<string, unknown>) => {
-                        if (msg.role === "assistant" && typeof msg.content === "string") {
-                            const rc = reasoningRegistry.get(msg.content);
+            if (body.messages && Array.isArray(body.messages)) {
+                body.messages = body.messages.map((msg: Record<string, unknown>) => {
+                    if (msg.role === "assistant") {
+                        const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
 
-                            if (rc) {
-                                reasoningRegistry.delete(msg.content); // 消费即清理，防止内存泄漏
+                        if (toolCalls.length > 0 && typeof msg.reasoning_content !== "string") {
+                            const reasoningContent = reasoningRegistry.get(
+                                createAssistantMessageReasoningKey({
+                                    content: msg.content,
+                                    tool_calls: toolCalls
+                                })
+                            );
 
-                                return { ...msg, reasoning_content: rc };
+                            if (reasoningContent) {
+                                return { ...msg, reasoning_content: reasoningContent };
                             }
                         }
+                    }
 
-                        return msg;
-                    });
-                    init = { ...init, body: JSON.stringify(body) };
-                }
-            } catch {
-                // 非 JSON body 或格式不符，静默跳过
+                    return msg;
+                });
+                validateReasoningAwareMessages(body.messages);
+                init = { ...init, body: JSON.stringify(body) };
             }
         }
 
-        // 兜底：FIFO 上限，防止极端情况下未消费的条目无限堆积
-        while (reasoningRegistry.size > REASONING_REGISTRY_MAX_SIZE) {
-            const firstKey = reasoningRegistry.keys().next().value as string | undefined;
-
-            if (firstKey) reasoningRegistry.delete(firstKey);
-            else break;
-        }
+        trimReasoningRegistry();
 
         return realFetch(input, init);
     };
@@ -868,6 +1051,32 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 注册历史 assistant 消息中的 reasoning_content，保证 checkpoint 回放时仍能补齐请求体。
+     */
+    private _registerReasoningContentFromMessages(messages: BaseMessage[]): void {
+        for (const message of messages) {
+            if (!AIMessage.isInstance(message)) {
+                continue;
+            }
+
+            const anyMessage = message as any;
+            const reasoningContent = anyMessage?.additional_kwargs?.reasoning_content;
+
+            if (typeof reasoningContent !== "string" || reasoningContent.length === 0) {
+                continue;
+            }
+
+            registerReasoningContent(
+                {
+                    content: anyMessage.content ?? "",
+                    tool_calls: Array.isArray(anyMessage.tool_calls) ? anyMessage.tool_calls : []
+                },
+                reasoningContent
+            );
+        }
+    }
+
+    /**
      * 使用消息列表生成文本（流式，支持工具绑定）
      * 适用于 Agent 等需要复杂消息历史和工具调用的场景
      * @param modelName 模型名称（如果未指定或为 "default"，则使用配置中的第一个置顶模型）
@@ -887,6 +1096,8 @@ export class TextGeneratorService extends Disposable {
         abortSignal?: AbortSignal
     ): Promise<AsyncIterableIterator<any>> {
         const config = await this.configManagerService.getCurrentConfig();
+
+        this._registerReasoningContentFromMessages(messages);
 
         // 如果未指定模型或指定为 "default"，使用配置中的第一个置顶模型
         const effectiveModelName =

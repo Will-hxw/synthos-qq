@@ -248,6 +248,242 @@ export class LangGraphAgentExecutor {
     }
 
     /**
+     * 为重复或冲突的 tool_call id 生成稳定的唯一 ID。
+     */
+    private _allocateToolCallId(
+        originalId: string,
+        usedIds: Set<string>,
+        duplicateCounters: Map<string, number>
+    ): string {
+        const baseId = originalId.trim() || "tool-call";
+
+        if (!usedIds.has(baseId)) {
+            usedIds.add(baseId);
+
+            return baseId;
+        }
+
+        let nextIndex = duplicateCounters.get(baseId) ?? 1;
+        let candidate = `${baseId}__dup_${nextIndex}`;
+
+        while (usedIds.has(candidate)) {
+            nextIndex += 1;
+            candidate = `${baseId}__dup_${nextIndex}`;
+        }
+
+        duplicateCounters.set(baseId, nextIndex + 1);
+        usedIds.add(candidate);
+
+        return candidate;
+    }
+
+    /**
+     * 规范化 assistant tool_calls 的 ID，保留所有工具调用并避免重复 ID。
+     */
+    private _normalizeToolCallIds(
+        toolCalls: ToolCall[],
+        reservedIds: Set<string> = new Set()
+    ): {
+        toolCalls: ToolCall[];
+        originalIds: string[];
+        rewrites: Array<{ originalId: string; newId: string; toolName: string }>;
+    } {
+        const usedIds = reservedIds;
+        const duplicateCounters = new Map<string, number>();
+        const normalizedToolCalls: ToolCall[] = [];
+        const originalIds: string[] = [];
+        const rewrites: Array<{ originalId: string; newId: string; toolName: string }> = [];
+
+        for (const [index, toolCall] of toolCalls.entries()) {
+            const originalId = String(toolCall.id || `tool-call-${index}`);
+            const newId = this._allocateToolCallId(originalId, usedIds, duplicateCounters);
+
+            if (newId !== originalId) {
+                rewrites.push({
+                    originalId,
+                    newId,
+                    toolName: toolCall.name
+                });
+            }
+
+            originalIds.push(originalId);
+            normalizedToolCalls.push({
+                ...toolCall,
+                id: newId
+            });
+        }
+
+        return {
+            toolCalls: normalizedToolCalls,
+            originalIds,
+            rewrites
+        };
+    }
+
+    private _getAIMessageToolCalls(message: AIMessage): ToolCall[] {
+        const anyMessage = message as any;
+        const rawToolCalls = Array.isArray(anyMessage.tool_calls) ? anyMessage.tool_calls : [];
+
+        return rawToolCalls.map((toolCall: any, index: number) => ({
+            id: String(toolCall?.id || `tool-call-${index}`),
+            name: String(toolCall?.name || ""),
+            arguments: this._normalizeToolCallArguments(toolCall?.args ?? toolCall?.arguments)
+        }));
+    }
+
+    private _cloneAIMessageWithToolCalls(message: AIMessage, toolCalls: ToolCall[]): AIMessage {
+        const anyMessage = message as any;
+
+        return new AIMessage({
+            id: anyMessage.id,
+            name: anyMessage.name,
+            content: anyMessage.content ?? "",
+            tool_calls: toolCalls.map(toolCall => ({
+                id: toolCall.id,
+                name: toolCall.name,
+                args: toolCall.arguments
+            })),
+            invalid_tool_calls: anyMessage.invalid_tool_calls,
+            usage_metadata: anyMessage.usage_metadata,
+            additional_kwargs: { ...(anyMessage.additional_kwargs ?? {}) },
+            response_metadata: { ...(anyMessage.response_metadata ?? {}) }
+        } as any);
+    }
+
+    private _cloneToolMessageWithId(message: ToolMessage, toolCallId: string): ToolMessage {
+        const anyMessage = message as any;
+
+        return new ToolMessage({
+            id: anyMessage.id,
+            name: anyMessage.name,
+            content: anyMessage.content ?? "",
+            tool_call_id: toolCallId,
+            status: anyMessage.status,
+            artifact: anyMessage.artifact,
+            metadata: anyMessage.metadata,
+            additional_kwargs: { ...(anyMessage.additional_kwargs ?? {}) },
+            response_metadata: { ...(anyMessage.response_metadata ?? {}) }
+        } as any);
+    }
+
+    /**
+     * 修复 checkpoint 历史中的重复 tool_call_id，并按 assistant/tool 出现顺序保持配对。
+     */
+    private _normalizePromptMessages(messages: BaseMessage[]): BaseMessage[] {
+        const normalizedMessages: BaseMessage[] = [];
+        const usedToolCallIds = new Set<string>();
+        const pendingToolCallIdsByOriginalId = new Map<string, string[]>();
+
+        for (const message of messages) {
+            if (AIMessage.isInstance(message)) {
+                const toolCalls = this._getAIMessageToolCalls(message);
+
+                if (toolCalls.length === 0) {
+                    normalizedMessages.push(message);
+                    continue;
+                }
+
+                const normalized = this._normalizeToolCallIds(toolCalls, usedToolCallIds);
+
+                for (const [index, originalId] of normalized.originalIds.entries()) {
+                    const queue = pendingToolCallIdsByOriginalId.get(originalId) ?? [];
+
+                    queue.push(normalized.toolCalls[index].id);
+                    pendingToolCallIdsByOriginalId.set(originalId, queue);
+                }
+
+                for (const rewrite of normalized.rewrites) {
+                    this.LOGGER.warning(
+                        `改写重复 tool_call id: ${rewrite.originalId} -> ${rewrite.newId}，工具: ${rewrite.toolName}`
+                    );
+                }
+
+                normalizedMessages.push(this._cloneAIMessageWithToolCalls(message, normalized.toolCalls));
+                continue;
+            }
+
+            if (ToolMessage.isInstance(message)) {
+                const originalToolCallId = String((message as any).tool_call_id || "");
+                const queue = pendingToolCallIdsByOriginalId.get(originalToolCallId);
+
+                if (queue && queue.length > 0) {
+                    const normalizedToolCallId = queue.shift()!;
+
+                    normalizedMessages.push(this._cloneToolMessageWithId(message, normalizedToolCallId));
+                    continue;
+                }
+            }
+
+            normalizedMessages.push(message);
+        }
+
+        return normalizedMessages;
+    }
+
+    /**
+     * 发起 LLM 请求前校验 assistant/tool 消息的 tool_call_id 契约。
+     */
+    private _validatePromptMessages(messages: BaseMessage[]): void {
+        const errors: string[] = [];
+        const allToolCallIds = new Set<string>();
+        const outstandingToolCallIds = new Set<string>();
+        const consumedToolCallIds = new Set<string>();
+
+        for (const [index, message] of messages.entries()) {
+            if (AIMessage.isInstance(message)) {
+                const toolCalls = this._getAIMessageToolCalls(message);
+                const idsInMessage = new Set<string>();
+
+                for (const toolCall of toolCalls) {
+                    if (!toolCall.id) {
+                        errors.push(`message[${index}] assistant tool_call 缺少 id`);
+                        continue;
+                    }
+                    if (idsInMessage.has(toolCall.id)) {
+                        errors.push(`message[${index}] assistant tool_call_id 重复: ${toolCall.id}`);
+                    }
+                    if (allToolCallIds.has(toolCall.id)) {
+                        errors.push(`message[${index}] tool_call_id 全局重复: ${toolCall.id}`);
+                    }
+
+                    idsInMessage.add(toolCall.id);
+                    allToolCallIds.add(toolCall.id);
+                    outstandingToolCallIds.add(toolCall.id);
+                }
+                continue;
+            }
+
+            if (ToolMessage.isInstance(message)) {
+                const toolCallId = String((message as any).tool_call_id || "");
+
+                if (!toolCallId) {
+                    errors.push(`message[${index}] tool message 缺少 tool_call_id`);
+                    continue;
+                }
+                if (consumedToolCallIds.has(toolCallId)) {
+                    errors.push(`message[${index}] tool message 重复: ${toolCallId}`);
+                    continue;
+                }
+                if (!outstandingToolCallIds.has(toolCallId)) {
+                    errors.push(`message[${index}] tool message 孤儿: ${toolCallId}`);
+                    continue;
+                }
+
+                consumedToolCallIds.add(toolCallId);
+                outstandingToolCallIds.delete(toolCallId);
+            }
+        }
+
+        if (outstandingToolCallIds.size > 0) {
+            errors.push(`assistant tool_calls 缺少对应 tool message: ${[...outstandingToolCallIds].join(", ")}`);
+        }
+
+        if (errors.length > 0) {
+            throw new Error(`Agent prompt 校验失败: ${errors.join("; ")}`);
+        }
+    }
+
+    /**
      * 规范化流式工具调用参数。
      */
     private _normalizeToolCallArguments(args: unknown): Record<string, unknown> {
@@ -520,7 +756,29 @@ export class LangGraphAgentExecutor {
                 arguments: draft.arguments
             }));
 
-        for (const tc of toolCalls) {
+        let normalizedToolCalls = this._normalizeToolCallIds(toolCalls);
+
+        // 兼容：部分模型/渠道不支持原生 tool_calls，沿用旧实现的"文本工具调用"兜底
+        if (normalizedToolCalls.toolCalls.length === 0 && fullContent) {
+            const parsed = ToolCallParser.parseToolCalls(fullContent);
+
+            if (parsed.length > 0) {
+                const filtered = parsed.filter(tc => args.enabledTools.includes(tc.name));
+
+                if (filtered.length > 0) {
+                    this.LOGGER.info(`从文本中解析到 ${filtered.length} 个工具调用(已按 enabledTools 过滤)`);
+                    normalizedToolCalls = this._normalizeToolCallIds(filtered);
+                }
+            }
+        }
+
+        for (const rewrite of normalizedToolCalls.rewrites) {
+            this.LOGGER.warning(
+                `改写重复 tool_call id: ${rewrite.originalId} -> ${rewrite.newId}，工具: ${rewrite.toolName}`
+            );
+        }
+
+        for (const tc of normalizedToolCalls.toolCalls) {
             args.onChunk({
                 type: "tool_call",
                 ts: Date.now(),
@@ -531,33 +789,12 @@ export class LangGraphAgentExecutor {
             });
         }
 
-        // 兼容：部分模型/渠道不支持原生 tool_calls，沿用旧实现的“文本工具调用”兜底
-        if (toolCalls.length === 0 && fullContent) {
-            const parsed = ToolCallParser.parseToolCalls(fullContent);
-
-            if (parsed.length > 0) {
-                const filtered = parsed.filter(tc => args.enabledTools.includes(tc.name));
-
-                if (filtered.length > 0) {
-                    this.LOGGER.info(`从文本中解析到 ${filtered.length} 个工具调用(已按 enabledTools 过滤)`);
-
-                    for (const tc of filtered) {
-                        args.onChunk({
-                            type: "tool_call",
-                            ts: Date.now(),
-                            conversationId: args.conversationId,
-                            toolCallId: tc.id,
-                            toolName: tc.name,
-                            toolArgs: tc.arguments
-                        });
-                    }
-
-                    toolCalls.push(...filtered);
-                }
-            }
-        }
-
-        return { content: fullContent, toolCalls, usage, reasoningContent: reasoningContentAcc };
+        return {
+            content: fullContent,
+            toolCalls: normalizedToolCalls.toolCalls,
+            usage,
+            reasoningContent: reasoningContentAcc
+        };
     }
 
     /**
@@ -613,11 +850,15 @@ export class LangGraphAgentExecutor {
             }
             promptMessages.push(...state.messages);
 
+            const normalizedPromptMessages = this._normalizePromptMessages(promptMessages);
+
+            this._validatePromptMessages(normalizedPromptMessages);
+
             if (state.runToolRounds === 0) {
                 this.LOGGER.info(`本轮启用工具: ${tools.map(t => t.function.name).join(", ") || "无"}`);
                 this.LOGGER.debug(
                     "发送给 LLM 的 messages: " +
-                        util.inspect(this._formatMessagesForLog(promptMessages), {
+                        util.inspect(this._formatMessagesForLog(normalizedPromptMessages), {
                             depth: null,
                             maxArrayLength: 50,
                             maxStringLength: 2000
@@ -626,7 +867,7 @@ export class LangGraphAgentExecutor {
             }
 
             const { content, toolCalls, usage, reasoningContent } = await this._callLLMStream({
-                messages: promptMessages,
+                messages: normalizedPromptMessages,
                 tools,
                 enabledTools: state.enabledTools,
                 conversationId,
@@ -637,12 +878,23 @@ export class LangGraphAgentExecutor {
             });
 
             // 将 reasoning_content 注入 AIMessage 并注册到全局 registry，
-            // 确保后续 LLM 调用时能通过自定义 fetch 回传给 DeepSeek API
+            // 确保后续 LLM 调用时能通过自定义 fetch 回传给 DeepSeek API。
+            // DeepSeek 要求 ALL assistant 消息的 reasoning_content 在每次调用中都回传。
             const aiMessageAdditionalKwargs: Record<string, unknown> = {};
 
-            if (reasoningContent && content) {
+            if (reasoningContent) {
                 aiMessageAdditionalKwargs.reasoning_content = reasoningContent;
-                registerReasoningContent(content, reasoningContent);
+                registerReasoningContent(
+                    {
+                        content: content || "",
+                        tool_calls: toolCalls.map(tc => ({
+                            id: tc.id,
+                            name: tc.name,
+                            args: tc.arguments
+                        }))
+                    },
+                    reasoningContent
+                );
             }
 
             const aiMessage = new AIMessage({
@@ -690,7 +942,8 @@ export class LangGraphAgentExecutor {
         const lgToolNode = new ToolNode(langChainTools, { handleToolErrors: true });
 
         const toolsNode = async (state: AgentGraphState): Promise<Partial<AgentGraphState>> => {
-            const lastMessage = state.messages.at(-1);
+            const normalizedStateMessages = this._normalizePromptMessages(state.messages);
+            const lastMessage = normalizedStateMessages.at(-1);
 
             if (!lastMessage || !AIMessage.isInstance(lastMessage)) {
                 return {};
@@ -717,7 +970,7 @@ export class LangGraphAgentExecutor {
                 toolsUsed = this._addUnique(toolsUsed, tc.name);
             }
 
-            const output = (await lgToolNode.invoke({ messages: state.messages })) as any;
+            const output = (await lgToolNode.invoke({ messages: normalizedStateMessages })) as any;
             const produced = Array.isArray(output) ? output : output?.messages;
             const toolMessages = (produced || []).filter((m: any) => ToolMessage.isInstance(m)) as ToolMessage[];
 

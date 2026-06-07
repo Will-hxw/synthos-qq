@@ -46,6 +46,17 @@ describe("Agent工具输入校验", () => {
         expect(all).toHaveBeenCalledWith("SELECT * FROM chat_messages LIMIT 10", []);
     });
 
+    it("sql_query应拒绝自然语言查询", async () => {
+        const all = vi.fn().mockResolvedValue([]);
+        const tool = new SQLQueryTool({ db: { all } } as any);
+        const executor = tool.getExecutor();
+
+        await expect(executor({ query: "清华群 讨论话题 群简介" } as any, {} as any)).rejects.toThrow(
+            "仅支持 SELECT 查询"
+        );
+        expect(all).not.toHaveBeenCalled();
+    });
+
     it("rag_search缺少query时应返回明确错误", async () => {
         const tool = new RagSearchTool({} as any, {} as any, {} as any);
         const executor = tool.getExecutor();

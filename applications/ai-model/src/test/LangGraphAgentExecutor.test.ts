@@ -1,6 +1,6 @@
 import "reflect-metadata";
 
-import { AIMessage } from "@langchain/core/messages";
+import { AIMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it, vi } from "vitest";
 
 import { LangGraphAgentExecutor } from "../agent-langgraph/LangGraphAgentExecutor";
@@ -240,5 +240,142 @@ describe("LangGraphAgentExecutor", () => {
                 }
             }
         ]);
+    });
+
+    it("重复tool_call_id应全部保留并改写为唯一ID", async () => {
+        const executor = createExecutorWithChunks([
+            {
+                content: "",
+                tool_calls: [
+                    {
+                        id: "duplicated-call",
+                        name: "rag_search",
+                        args: {
+                            query: "清华群简介"
+                        },
+                        index: 0
+                    },
+                    {
+                        id: "duplicated-call",
+                        name: "sql_query",
+                        args: {
+                            query: "清华群 简介"
+                        },
+                        index: 1
+                    },
+                    {
+                        id: "duplicated-call",
+                        name: "sql_query",
+                        args: {
+                            query: "SELECT COUNT(*) as count FROM chat_messages"
+                        },
+                        index: 2
+                    }
+                ]
+            }
+        ]);
+        const onChunk = vi.fn();
+
+        const result = await (executor as any)._callLLMStream({
+            messages: [],
+            tools: [],
+            enabledTools: ["rag_search", "sql_query"],
+            conversationId: "conversation-1",
+            onChunk,
+            temperature: undefined,
+            maxTokens: undefined,
+            abortSignal: undefined
+        });
+
+        expect(result.toolCalls).toEqual([
+            {
+                id: "duplicated-call",
+                name: "rag_search",
+                arguments: {
+                    query: "清华群简介"
+                }
+            },
+            {
+                id: "duplicated-call__dup_1",
+                name: "sql_query",
+                arguments: {
+                    query: "清华群 简介"
+                }
+            },
+            {
+                id: "duplicated-call__dup_2",
+                name: "sql_query",
+                arguments: {
+                    query: "SELECT COUNT(*) as count FROM chat_messages"
+                }
+            }
+        ]);
+        expect(onChunk).toHaveBeenCalledTimes(3);
+        expect(onChunk).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                type: "tool_call",
+                toolCallId: "duplicated-call__dup_1",
+                toolName: "sql_query"
+            })
+        );
+        expect(onChunk).toHaveBeenNthCalledWith(
+            3,
+            expect.objectContaining({
+                type: "tool_call",
+                toolCallId: "duplicated-call__dup_2",
+                toolName: "sql_query"
+            })
+        );
+    });
+
+    it("历史prompt中的重复AI工具调用和ToolMessage应按顺序成对改写", () => {
+        const executor = createExecutor();
+        const messages = [
+            new AIMessage({
+                content: "",
+                tool_calls: [
+                    {
+                        id: "old-call",
+                        name: "rag_search",
+                        args: {
+                            query: "清华群简介"
+                        }
+                    },
+                    {
+                        id: "old-call",
+                        name: "sql_query",
+                        args: {
+                            query: "SELECT COUNT(*) as count FROM chat_messages"
+                        }
+                    }
+                ],
+                additional_kwargs: {
+                    reasoning_content: "历史thinking"
+                }
+            }),
+            new ToolMessage({
+                content: '{"ok":true}',
+                tool_call_id: "old-call",
+                name: "rag_search"
+            }),
+            new ToolMessage({
+                content: '{"rowCount":1}',
+                tool_call_id: "old-call",
+                name: "sql_query"
+            })
+        ];
+
+        const normalizedMessages = (executor as any)._normalizePromptMessages(messages);
+
+        expect(normalizedMessages).toHaveLength(3);
+        expect((normalizedMessages[0] as any).tool_calls.map((tc: any) => tc.id)).toEqual([
+            "old-call",
+            "old-call__dup_1"
+        ]);
+        expect((normalizedMessages[0] as any).additional_kwargs.reasoning_content).toBe("历史thinking");
+        expect((normalizedMessages[1] as any).tool_call_id).toBe("old-call");
+        expect((normalizedMessages[2] as any).tool_call_id).toBe("old-call__dup_1");
+        expect(() => (executor as any)._validatePromptMessages(normalizedMessages)).not.toThrow();
     });
 });

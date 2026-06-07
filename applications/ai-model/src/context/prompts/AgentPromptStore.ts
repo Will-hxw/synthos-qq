@@ -55,7 +55,8 @@ export class AgentPromptStore {
                     ContentUtils.orderedList([
                         "可以先用一个工具获取初步信息，然后根据需要调用其他工具获取更多细节",
                         "如果工具返回的信息不足以回答问题，可以调整参数重新调用或尝试其他工具",
-                        "如果工具返回缺少参数等错误，必须立刻补齐参数并重试工具调用"
+                        "sql_query.query 必须是完整 SQL SELECT 语句；自然语言检索、关键词检索和语义查询必须使用 rag_search",
+                        "如果 sql_query 返回参数或 SQL 错误，应改用合法 SELECT 查询或 rag_search，不要把自然语言传给 sql_query"
                     ])
                 )
         );

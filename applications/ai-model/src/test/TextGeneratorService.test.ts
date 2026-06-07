@@ -5,7 +5,7 @@ import { join } from "path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
+import { TextGeneratorService, registerReasoningContent } from "../services/generators/text/TextGeneratorService";
 
 const { mockChatOpenAIConstructor, mockLogger } = vi.hoisted(() => ({
     mockChatOpenAIConstructor: vi.fn(),
@@ -59,6 +59,7 @@ describe("TextGeneratorService", () => {
     });
 
     afterEach(async () => {
+        vi.unstubAllGlobals();
         await rm(tempLogDir, { recursive: true, force: true });
     });
 
@@ -91,6 +92,27 @@ describe("TextGeneratorService", () => {
         maxTokens: 1024,
         reasoning
     });
+
+    async function getReasoningAwareFetch(): Promise<typeof fetch> {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce({
+            ai: {
+                models: {
+                    "deepseek-v4-pro": buildModelConfig({ enabled: false, effort: "minimal" })
+                },
+                defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
+                pinnedModels: []
+            },
+            logger: {
+                logDirectory: tempLogDir
+            }
+        });
+
+        await service.getChatModel("deepseek-v4-pro");
+
+        const options = mockChatOpenAIConstructor.mock.calls.at(-1)?.[0] as Record<string, any>;
+
+        return options.configuration.fetch as typeof fetch;
+    }
 
     it("模型未启用 reasoning 时不应透传 reasoning 参数", async () => {
         mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce({
@@ -134,6 +156,137 @@ describe("TextGeneratorService", () => {
                 effort: "low"
             }
         });
+    });
+
+    it("自定义fetch应为匹配的assistant工具消息注入reasoning_content", async () => {
+        const realFetch = vi.fn().mockResolvedValue({ ok: true });
+
+        vi.stubGlobal("fetch", realFetch);
+        registerReasoningContent(
+            {
+                content: "",
+                tool_calls: [
+                    {
+                        id: "inject-call-1",
+                        name: "rag_search",
+                        args: {
+                            query: "清华群简介"
+                        }
+                    }
+                ]
+            },
+            "thinking-content"
+        );
+
+        const reasoningAwareFetch = await getReasoningAwareFetch();
+
+        await reasoningAwareFetch("https://api.example.com/v1/chat/completions", {
+            method: "POST",
+            body: JSON.stringify({
+                messages: [
+                    {
+                        role: "assistant",
+                        content: "",
+                        tool_calls: [
+                            {
+                                id: "inject-call-1",
+                                type: "function",
+                                function: {
+                                    name: "rag_search",
+                                    arguments: '{"query":"清华群简介"}'
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        role: "tool",
+                        tool_call_id: "inject-call-1",
+                        content: '{"ok":true}'
+                    }
+                ]
+            })
+        } as any);
+
+        const sentBody = JSON.parse(realFetch.mock.calls[0][1].body);
+
+        expect(sentBody.messages[0].reasoning_content).toBe("thinking-content");
+    });
+
+    it("自定义fetch应在assistant工具消息缺少reasoning_content时本地抛错", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+        const reasoningAwareFetch = await getReasoningAwareFetch();
+
+        await expect(
+            reasoningAwareFetch("https://api.example.com/v1/chat/completions", {
+                method: "POST",
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            role: "assistant",
+                            content: "",
+                            tool_calls: [
+                                {
+                                    id: "missing-reasoning-call-1",
+                                    type: "function",
+                                    function: {
+                                        name: "rag_search",
+                                        arguments: '{"query":"清华群简介"}'
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            role: "tool",
+                            tool_call_id: "missing-reasoning-call-1",
+                            content: '{"ok":true}'
+                        }
+                    ]
+                })
+            } as any)
+        ).rejects.toThrow("缺少 reasoning_content");
+    });
+
+    it("自定义fetch应在assistant工具调用ID重复时本地抛错", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+        const reasoningAwareFetch = await getReasoningAwareFetch();
+
+        await expect(
+            reasoningAwareFetch("https://api.example.com/v1/chat/completions", {
+                method: "POST",
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            role: "assistant",
+                            content: "",
+                            reasoning_content: "thinking-content",
+                            tool_calls: [
+                                {
+                                    id: "duplicate-fetch-call",
+                                    type: "function",
+                                    function: {
+                                        name: "rag_search",
+                                        arguments: '{"query":"清华群简介"}'
+                                    }
+                                },
+                                {
+                                    id: "duplicate-fetch-call",
+                                    type: "function",
+                                    function: {
+                                        name: "sql_query",
+                                        arguments: '{"query":"SELECT 1"}'
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            role: "tool",
+                            tool_call_id: "duplicate-fetch-call",
+                            content: '{"ok":true}'
+                        }
+                    ]
+                })
+            } as any)
+        ).rejects.toThrow("tool_call_id 重复");
     });
 
     it("JSON 校验场景应剥离完整包裹的 JSON 代码围栏", async () => {
