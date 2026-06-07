@@ -10,22 +10,22 @@
             },
             "sourceReconcile": {
                 "enabled": false,
-                "batchSize": 5000
+                "batchSize": 50000
             }
         }
     },
     "preprocessors": {
         "AccumulativeSplitter": {
             "mode": "charCount",
-            "maxCharCount": 2000,
-            "maxMessageCount": 50,
+            "maxCharCount": 4000,
+            "maxMessageCount": 100,
             "persistentKVStorePath": "./data/splitter-kv"
         },
         "TimeoutSplitter": {
             "timeoutInMinutes": 30
         },
         "historicalBackfill": {
-            "messageLimit": 5000
+            "messageLimit": 10000
         }
     },
     "ai": {
@@ -169,7 +169,7 @@
         "embedding": {
             "ollamaBaseURL": "http://localhost:11434",
             "model": "bge-m3",
-            "batchSize": 10,
+            "batchSize": 50,
             "vectorDBPath": "./data/vectors.db",
             "dimension": 1024
         },
@@ -238,7 +238,7 @@
             "monthlyDayOfMonth": 1
         },
         "generation": {
-            "topNTopics": 100,
+            "topNTopics": 200,
             "interestScoreThreshold": 0,
             "llmRetryCount": 5,
             "aiModels": ["example-model"]

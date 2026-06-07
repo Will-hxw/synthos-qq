@@ -22,7 +22,7 @@ import {
 import { VectorDBManagerService } from "../services/embedding/VectorDBManagerService";
 
 const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
-const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 200;
+const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 500;
 
 /**
  * AI 摘要任务处理器

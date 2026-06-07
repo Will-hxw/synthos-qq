@@ -7,34 +7,49 @@
             "dbPatch": {
                 "enabled": false,
                 "patchSQL": ""
+            },
+            "sourceReconcile": {
+                "enabled": false,
+                "batchSize": 50000
             }
         }
     },
     "preprocessors": {
         "AccumulativeSplitter": {
             "mode": "charCount",
-            "maxCharCount": 2000,
-            "maxMessageCount": 50,
+            "maxCharCount": 4000,
+            "maxMessageCount": 100,
             "persistentKVStorePath": "./data/splitter-kv"
         },
         "TimeoutSplitter": {
             "timeoutInMinutes": 30
+        },
+        "historicalBackfill": {
+            "messageLimit": 10000
         }
     },
     "ai": {
         "models": {
             "example-model": {
                 "apiKey": "replace-with-llm-api-key",
-                "baseURL": "https://api.openai.com/v1",
+                "baseURL": "https://api.example.com/v1",
                 "temperature": 0.7,
-                "maxTokens": 100000
+                "maxTokens": 100000,
+                "reasoning": {
+                    "enabled": false,
+                    "effort": "minimal"
+                }
             }
         },
         "defaultModelConfig": {
             "apiKey": "replace-with-llm-api-key",
-            "baseURL": "https://api.openai.com/v1",
+            "baseURL": "https://api.example.com/v1",
             "temperature": 0.7,
-            "maxTokens": 100000
+            "maxTokens": 100000,
+            "reasoning": {
+                "enabled": false,
+                "effort": "minimal"
+            }
         },
         "defaultModelName": "example-model",
         "pinnedModels": ["example-model"],
@@ -48,13 +63,106 @@
         },
         "interestScore": {
             "UserInterestsPositiveKeywords": [
-                "AI Agent", "RAG", "LLM", "技术讨论"
+                "AI Agent",
+                "Agent Infra",
+                "多智能体",
+                "工具调用",
+                "工作流编排",
+                "RAG",
+                "向量检索",
+                "知识库",
+                "语义搜索",
+                "LLM 应用",
+                "大模型",
+                "提示词工程",
+                "模型评测",
+                "模型部署",
+                "推理加速",
+                "LLM Infra",
+                "AI 工程化",
+                "算法",
+                "机器学习",
+                "深度学习",
+                "强化学习",
+                "推荐系统",
+                "搜索",
+                "广告算法",
+                "数据挖掘",
+                "自然语言处理",
+                "NLP",
+                "语言模型",
+                "语音音频",
+                "计算机视觉",
+                "CV",
+                "多模态",
+                "图形学",
+                "3D",
+                "游戏 AI",
+                "机器人",
+                "自动驾驶",
+                "硬件",
+                "嵌入式",
+                "系统架构",
+                "后端",
+                "前端",
+                "全栈",
+                "客户端",
+                "TypeScript",
+                "Node.js",
+                "React",
+                "数据库",
+                "SQL",
+                "分布式系统",
+                "微服务",
+                "消息队列",
+                "可观测性",
+                "性能优化",
+                "工程效率",
+                "DevOps",
+                "CI/CD",
+                "云原生",
+                "容器化",
+                "Kubernetes",
+                "运维",
+                "安全",
+                "网络",
+                "大数据",
+                "数据工程",
+                "数据分析",
+                "测试",
+                "质量保障",
+                "开源项目",
+                "技术博客",
+                "论文",
+                "科研",
+                "保研",
+                "博士",
+                "实习",
+                "求职",
+                "投资",
+                "股票"
             ],
             "UserInterestsNegativeKeywords": [
-                "广告", "灌水"
+                "无关闲聊",
+                "重复灌水",
+                "低信息量转发",
+                "纯表情刷屏",
+                "广告营销",
+                "抽奖拉票",
+                "谣言",
+                "人身攻击",
+                "引战",
+                "色情低俗",
+                "博彩",
+                "诈骗"
             ],
             "llmEvaluationDescriptions": [
-                "用户关注 AI、LLM、RAG 等技术话题。"
+                "用户高度关注 AI Agent、RAG、向量检索、LLM 应用、提示词工程、多智能体、模型评测、模型部署、推理加速、LLM Infra 与 AI 工程化等智能系统落地方向。",
+                "用户关注算法与机器学习基础，包括推荐、搜索、广告、数据挖掘、NLP、语音音频、CV、多模态、强化学习、机器人、自动驾驶、图形学、3D 与游戏 AI。",
+                "用户关注工程架构与生产系统，包括 TypeScript、Node.js、React、前端、后端、全栈、客户端、数据库、SQL、微服务、分布式系统、消息队列、可观测性、性能优化与工程效率。",
+                "用户关注基础设施与平台工程，包括 DevOps、CI/CD、云原生、容器化、Kubernetes、运维、安全、网络、大数据、数据工程、测试与质量保障。",
+                "用户关注个人发展与高价值信息，包括开源项目、技术博客、论文、科研、保研、博士、实习、求职、投资和股票等具有长期积累价值的话题。",
+                "当话题只是低信息量闲聊、重复灌水、纯表情刷屏、营销广告、抽奖拉票、谣言、攻击性争吵、色情低俗、博彩或诈骗内容时，应明显降低兴趣度评分。"
             ],
             "llmEvaluationBatchSize": 10
         },
@@ -62,7 +170,7 @@
             "_comment": "默认连接宿主机 Ollama；如果使用 docker compose --profile ollama，请改为 http://ollama:11434",
             "ollamaBaseURL": "http://host.docker.internal:11434",
             "model": "bge-m3",
-            "batchSize": 10,
+            "batchSize": 50,
             "vectorDBPath": "./data/vectors.db",
             "dimension": 1024
         },
@@ -121,16 +229,19 @@
         "enabled": true,
         "sendEmail": false,
         "schedule": {
-            "halfDailyTimes": ["12:00", "18:00"],
+            "halfDailyTimes": [
+                "11:00",
+                "23:00"
+            ],
             "weeklyTime": "20:00",
             "weeklyDayOfWeek": 1,
             "monthlyTime": "20:00",
             "monthlyDayOfMonth": 1
         },
         "generation": {
-            "topNTopics": 20,
+            "topNTopics": 200,
             "interestScoreThreshold": 0,
-            "llmRetryCount": 3,
+            "llmRetryCount": 5,
             "aiModels": ["example-model"]
         }
     },
