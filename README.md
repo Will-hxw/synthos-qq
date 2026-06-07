@@ -21,7 +21,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/<your-org>/synthos.git
+git clone https://github.com/Will-hxw/synthos.git
 cd synthos
 
 # 2. 安装依赖
@@ -47,8 +47,8 @@ bash run.sh
 ### 项目截图
 
 <p align="center">
-  <img src="docs\assets\前端白色.png" alt="WebUI 截图 1" width="45%">
-  <img src="docs\assets\前端暗黑.png" alt="WebUI 截图 2" width="45%">
+  <img src="docs/assets/前端白色.png" alt="WebUI 截图 1" width="45%">
+  <img src="docs/assets/前端暗黑.png" alt="WebUI 截图 2" width="45%">
   <br>
   <em>WebUI 界面预览</em>
 </p>
