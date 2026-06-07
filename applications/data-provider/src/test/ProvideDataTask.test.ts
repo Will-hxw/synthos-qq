@@ -95,6 +95,13 @@ describe("ProvideDataTaskHandler", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            dataProviders: {
+                QQ: {
+                    sourceReconcile: {
+                        batchSize: 50000
+                    }
+                }
+            },
             webUI_Backend: {
                 kvStoreBasePath: "D:\\tmp\\synthos-kv"
             }
@@ -134,7 +141,7 @@ describe("ProvideDataTaskHandler", () => {
 
         expect(mockQQProvider.getMsgByTimeRange).toHaveBeenCalledWith(19_000, 30_000, "group-a");
         expect(mockImDbAccessService.storeRawChatMessages).toHaveBeenNthCalledWith(1, [currentMessage]);
-        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).toHaveBeenCalledWith("group-a", null, 5000);
+        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).toHaveBeenCalledWith("group-a", null, 50000);
         expect(mockCursorStore.del).toHaveBeenCalledWith("qq-source-reconcile:group-a");
         expect(mockCursorStore.put).toHaveBeenCalledWith(
             `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
@@ -187,7 +194,8 @@ describe("ProvideDataTaskHandler", () => {
                 scannedCount: 2,
                 missingCount: 1,
                 insertedCount: 1,
-                reachedEnd: false
+                reachedEnd: false,
+                batchSize: 50000
             })
         );
         expect(mockCursorStore.del).not.toHaveBeenCalledWith("qq-source-reconcile:group-a");
@@ -221,6 +229,38 @@ describe("ProvideDataTaskHandler", () => {
                 scannedCount: 1,
                 missingCount: 0,
                 insertedCount: 0,
+                reachedEnd: true,
+                batchSize: 50000
+            })
+        );
+    });
+
+    it("QQ 原库回填批大小应读取配置", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            dataProviders: {
+                QQ: {
+                    sourceReconcile: {
+                        batchSize: 1234
+                    }
+                }
+            },
+            webUI_Backend: {
+                kvStoreBasePath: "D:\\tmp\\synthos-kv"
+            }
+        });
+
+        await runProvideDataJob({
+            groupIds: ["group-a"],
+            startTimeStamp: 1_000,
+            endTimeStamp: 30_000
+        });
+
+        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).toHaveBeenCalledWith("group-a", null, 1234);
+        expect(mockCursorStore.put).toHaveBeenCalledWith(
+            `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
+            expect.objectContaining({
+                groupId: "group-a",
+                batchSize: 1234,
                 reachedEnd: true
             })
         );

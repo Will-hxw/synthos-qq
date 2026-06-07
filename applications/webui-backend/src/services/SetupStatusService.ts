@@ -216,6 +216,14 @@ export class SetupStatusService {
 
         const candidate = value as Partial<QQSourceReconcileStatus>;
 
-        return typeof candidate.groupId === "string" && typeof candidate.updatedAt === "number";
+        return (
+            typeof candidate.groupId === "string" &&
+            typeof candidate.scannedCount === "number" &&
+            typeof candidate.missingCount === "number" &&
+            typeof candidate.insertedCount === "number" &&
+            typeof candidate.reachedEnd === "boolean" &&
+            typeof candidate.batchSize === "number" &&
+            typeof candidate.updatedAt === "number"
+        );
     }
 }

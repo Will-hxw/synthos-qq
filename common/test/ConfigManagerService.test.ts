@@ -55,6 +55,10 @@ vi.mock("@root/common/util/ASSERT", () => ({
 
 // 在 mock 之后导入类（不是单例实例）
 import { ConfigManagerService } from "../services/config/ConfigManagerService";
+import {
+    PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT,
+    QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
+} from "../services/config/schemas/GlobalConfig";
 
 // ==================== 测试数据 ====================
 
@@ -69,6 +73,9 @@ const mockMainConfig = {
             dbKey: "test-key",
             dbPatch: {
                 enabled: false
+            },
+            sourceReconcile: {
+                batchSize: 50000
             }
         }
     },
@@ -81,6 +88,9 @@ const mockMainConfig = {
         },
         TimeoutSplitter: {
             timeoutInMinutes: 30
+        },
+        historicalBackfill: {
+            messageLimit: 5000
         }
     },
     ai: {
@@ -360,6 +370,48 @@ describe("ConfigManagerService", () => {
             expect(config.logger.logDirectory).toBe("/logs"); // 保持原值
             expect(config.dataProviders.QQ.dbKey).toBe("override-key"); // 嵌套属性被覆盖
             expect(config.dataProviders.QQ.VFSExtPath).toBe("/path/to/vfs"); // 嵌套属性保持原值
+        });
+
+        it("历史配置缺少 QQ 原库回填配置时应填充默认批大小", async () => {
+            const legacyConfig = {
+                ...mockMainConfig,
+                dataProviders: {
+                    QQ: {
+                        VFSExtPath: mockMainConfig.dataProviders.QQ.VFSExtPath,
+                        dbBasePath: mockMainConfig.dataProviders.QQ.dbBasePath,
+                        dbKey: mockMainConfig.dataProviders.QQ.dbKey,
+                        dbPatch: mockMainConfig.dataProviders.QQ.dbPatch
+                    }
+                }
+            };
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.dataProviders.QQ.sourceReconcile.batchSize).toBe(QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT);
+        });
+
+        it("历史配置缺少预处理历史回填配置时应填充默认消息数量", async () => {
+            const legacyConfig = {
+                ...mockMainConfig,
+                preprocessors: {
+                    AccumulativeSplitter: mockMainConfig.preprocessors.AccumulativeSplitter,
+                    TimeoutSplitter: mockMainConfig.preprocessors.TimeoutSplitter
+                }
+            };
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.preprocessors.historicalBackfill.messageLimit).toBe(
+                PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT
+            );
         });
 
         it("应将相对路径解析为相对于配置文件所在目录的绝对路径", async () => {

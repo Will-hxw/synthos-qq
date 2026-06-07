@@ -215,7 +215,8 @@ cp synthos_config.example.json synthos_config.json
       // "dbBasePath": "/Users/<用户名>/Library/Containers/com.tencent.qq/Data/Documents/nt_qq/nt_db",
 
       "dbKey": "<数据库密钥>",
-      "dbPatch": { "enabled": false }
+      "dbPatch": { "enabled": false },
+      "sourceReconcile": { "batchSize": 50000 }
     }
   }
 }
@@ -226,6 +227,9 @@ cp synthos_config.example.json synthos_config.json
 | `VFSExtPath` | SQLite VFS 扩展路径，项目内置 `win_x86`（`.dll`）和 `mac_arm64`（`.dylib`）两个版本 |
 | `dbBasePath` | QQ 本地数据库目录，不同操作系统路径不同，具体情况具体分析 |
 | `dbKey` | QQ 数据库加密密钥 |
+| `sourceReconcile.batchSize` | QQ 原库每个群每轮扫描的业务消息数量，默认 50000，最大 50000 |
+
+历史数据是分批渐进处理的：`dataProviders.QQ.sourceReconcile.batchSize` 控制每轮从 QQ 原库扫描多少业务消息，`preprocessors.historicalBackfill.messageLimit` 控制每轮对已落库但尚未分配 `sessionId` 的历史消息做多少候选回填，默认 5000。
 
 **数据库密钥获取方式：**
 

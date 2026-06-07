@@ -3,6 +3,7 @@ import type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQS
 
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
+import { QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX } from "@root/common/services/config/schemas/GlobalConfig";
 import { RawChatMessage } from "@root/common/contracts/data-provider/index";
 import Logger from "@root/common/util/Logger";
 import { PromisifiedSQLite } from "@root/common/util/promisify/PromisifiedSQLite";
@@ -32,7 +33,6 @@ export type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQS
 
 sqlite3.verbose();
 
-const QQ_SOURCE_MSG_ID_PAGE_LIMIT_MAX = 5000;
 const QQ_SOURCE_MSG_ID_SQL_CHUNK_SIZE = 500;
 
 interface QQMessageParseStats {
@@ -63,7 +63,7 @@ export class QQProvider extends Disposable implements IIMProvider {
             throw ErrorReasons.UNINITIALIZED_ERROR;
         }
 
-        const pageLimit = Math.min(Math.max(Math.floor(limit), 1), QQ_SOURCE_MSG_ID_PAGE_LIMIT_MAX);
+        const pageLimit = Math.min(Math.max(Math.floor(limit), 1), QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX);
         const firstPage = await this._getBusinessMsgIdPage(groupId, cursor, pageLimit);
 
         if (firstPage.messages.length > 0 || !cursor) {

@@ -68,6 +68,11 @@ describe("PreprocessTaskHandler", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            preprocessors: {
+                historicalBackfill: {
+                    messageLimit: 5000
+                }
+            },
             groupConfigs: {
                 "group-a": {
                     splitStrategy: "accumulative"
@@ -122,6 +127,10 @@ describe("PreprocessTaskHandler", () => {
 
         expect(mockAccumulativeSplitter.assignSessionId).toHaveBeenNthCalledWith(1, "group-a", 1000, 2000);
         expect(mockAccumulativeSplitter.assignSessionId).toHaveBeenNthCalledWith(2, "group-a", 10, 20);
+        expect(mockImDbAccessService.getEarliestUnprocessedMessageTimeRangeByGroupId).toHaveBeenCalledWith(
+            "group-a",
+            5000
+        );
         expect(mockImDbAccessService.storeProcessedChatMessages).toHaveBeenCalledTimes(2);
         expect(mockImDbAccessService.storeProcessedChatMessages).toHaveBeenNthCalledWith(
             2,
@@ -131,6 +140,44 @@ describe("PreprocessTaskHandler", () => {
                     sessionId: "session-historical-msg"
                 })
             ])
+        );
+    });
+
+    it("历史未分配消息回填数量应读取配置", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            preprocessors: {
+                historicalBackfill: {
+                    messageLimit: 1234
+                }
+            },
+            groupConfigs: {
+                "group-a": {
+                    splitStrategy: "accumulative"
+                }
+            }
+        });
+
+        const handler = new PreprocessTaskHandler(mockConfigManagerService as any, mockImDbAccessService as any);
+
+        await handler.register();
+
+        const processor = mockAgendaDefine.mock.calls[0][1] as (job: any) => Promise<void>;
+
+        await processor({
+            attrs: {
+                name: "Preprocess",
+                data: {
+                    groupIds: ["group-a"],
+                    startTimeStamp: 1000,
+                    endTimeStamp: 2000
+                }
+            },
+            touch: vi.fn().mockResolvedValue(undefined)
+        });
+
+        expect(mockImDbAccessService.getEarliestUnprocessedMessageTimeRangeByGroupId).toHaveBeenCalledWith(
+            "group-a",
+            1234
         );
     });
 });

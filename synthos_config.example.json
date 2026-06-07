@@ -7,6 +7,9 @@
             "dbPatch": {
                 "enabled": false,
                 "patchSQL": ""
+            },
+            "sourceReconcile": {
+                "batchSize": 50000
             }
         }
     },
@@ -19,6 +22,9 @@
         },
         "TimeoutSplitter": {
             "timeoutInMinutes": 30
+        },
+        "historicalBackfill": {
+            "messageLimit": 5000
         }
     },
     "ai": {

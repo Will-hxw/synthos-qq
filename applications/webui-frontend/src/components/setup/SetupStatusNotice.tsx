@@ -73,8 +73,8 @@ export default function SetupStatusNotice({ className = "" }: SetupStatusNoticeP
                                 ))}
                                 {recentReconcileStatuses.map(item => (
                                     <p key={item.groupId} className="break-words text-warning-800 dark:text-warning-200">
-                                        群 {item.groupId} 最近 QQ 原库对账：扫描 {item.scannedCount} 条，缺失 {item.missingCount} 条，补入 {item.insertedCount} 条，更新时间{" "}
-                                        {formatTimestamp(item.updatedAt)}
+                                        群 {item.groupId} 最近 QQ 原库回填：批大小 {item.batchSize}，扫描 {item.scannedCount} 条，缺失 {item.missingCount} 条，补入 {item.insertedCount} 条，
+                                        {item.reachedEnd ? "已扫到末尾" : "未扫到末尾"}，更新时间 {formatTimestamp(item.updatedAt)}
                                     </p>
                                 ))}
                             </div>

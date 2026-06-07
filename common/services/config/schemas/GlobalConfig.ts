@@ -4,6 +4,10 @@ import { DeepRequired } from "../../../util/type/DeepRequired";
 
 // ==================== Zod Schema 定义（用于运行时验证）====================
 
+export const QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT = 50000;
+export const QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX = 50000;
+export const PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT = 5000;
+
 /**
  * AI 模型配置 Schema
  */
@@ -110,7 +114,23 @@ export const GlobalConfigObjectSchema = z.object({
                             enabled: z.boolean().describe("是否启用数据库补丁"),
                             patchSQL: z.string().optional().describe("数据库补丁的 SQL 语句")
                         })
-                        .describe("数据库补丁配置")
+                        .describe("数据库补丁配置"),
+                    sourceReconcile: z
+                        .object({
+                            batchSize: z
+                                .number()
+                                .positive()
+                                .int()
+                                .max(QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX)
+                                .default(QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT)
+                                .describe(
+                                    `QQ 原库回填每个群每轮扫描的业务消息数量，最大 ${QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX}`
+                                )
+                        })
+                        .default({
+                            batchSize: QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
+                        })
+                        .describe("QQ 原库回填配置")
                 })
                 .describe("QQ 数据源配置")
         })
@@ -130,7 +150,20 @@ export const GlobalConfigObjectSchema = z.object({
                 .object({
                     timeoutInMinutes: z.number().positive().int().describe("超时时间（分钟）")
                 })
-                .describe("超时分割器配置")
+                .describe("超时分割器配置"),
+            historicalBackfill: z
+                .object({
+                    messageLimit: z
+                        .number()
+                        .positive()
+                        .int()
+                        .default(PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT)
+                        .describe("历史未分配消息每个群每轮预处理回填的候选消息数量")
+                })
+                .default({
+                    messageLimit: PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT
+                })
+                .describe("历史消息预处理回填配置")
         })
         .describe("预处理器配置"),
 

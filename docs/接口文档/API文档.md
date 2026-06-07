@@ -91,9 +91,11 @@
     "qqSourceReconcile": [
       {
         "groupId": "123456",
-        "scannedCount": 5000,
+        "scannedCount": 50000,
         "missingCount": 3,
         "insertedCount": 3,
+        "reachedEnd": false,
+        "batchSize": 50000,
         "updatedAt": 1760000000000
       }
     ],

@@ -12,8 +12,6 @@ import { ISplitter } from "../splitters/contracts/ISplitter";
 import { COMMON_TOKENS } from "../di/tokens";
 import { getAccumulativeSplitter, getTimeoutSplitter } from "../di/container";
 
-const HISTORICAL_BACKFILL_MESSAGE_LIMIT = 5000;
-
 /**
  * 预处理任务处理器
  * 负责对消息进行分割和预处理
@@ -88,7 +86,7 @@ export class PreprocessTaskHandler {
                         const backfillRange =
                             await this.imDbAccessService.getEarliestUnprocessedMessageTimeRangeByGroupId(
                                 groupId,
-                                HISTORICAL_BACKFILL_MESSAGE_LIMIT
+                                config.preprocessors.historicalBackfill.messageLimit
                             );
 
                         if (backfillRange) {

@@ -259,34 +259,36 @@ reasoning: { effort: "minimal" }
   await this._reconcileQQSourceMessages(activeProvider, qqSourceCursorStore, groupId);
   ```
 
-- `ProvideDataTask.ts:18`
+- `dataProviders.QQ.sourceReconcile.batchSize`
 
-  ```ts
-  const QQ_SOURCE_RECONCILE_BATCH_SIZE = 5000;
+  ```json
+  {
+    "sourceReconcile": { "batchSize": 50000 }
+  }
   ```
 
 #### 问题
 
 新群第一次导入时，如果库里没有该群消息，会从 timestamp 0 开始抓；这理论上可以抓历史。
 
-但后续 source reconcile 一次只扫描 5000 条，且依赖 KV cursor。对很多大群来说，历史消息可能需要很多轮 pipeline 才补完。用户看到前端可能短时间内只有部分数据，会认为“历史信息没有去抓捕”。
+后续 source reconcile 每轮扫描条数由 `dataProviders.QQ.sourceReconcile.batchSize` 控制；已落库但尚未分配 `sessionId` 的历史消息，每轮预处理回填候选数量由 `preprocessors.historicalBackfill.messageLimit` 控制。对很多大群来说，历史消息可能需要很多轮 pipeline 才补完。用户看到前端可能短时间内只有部分数据，会认为“历史信息没有去抓捕”。
 
 #### 影响
 
 - 新群导入后，历史数据不是即时完整；
-- 没有 UI 显示“历史对账进度”；
+- WebUI 启动状态提示会展示最近 QQ 原库回填状态；
 - 没有日志汇总告诉用户“当前已扫描到哪里，还剩多少未知”。
 
-#### 最小修复建议
+#### 当前处理
 
-1. 为 QQ source reconcile 增加进度状态 API / 日志：
+1. `/api/setup-status` 和 WebUI 启动状态提示展示 QQ 原库回填状态：
    - 当前群号；
    - 当前 cursor；
    - 本轮扫描条数；
    - 缺失补入条数；
    - 是否 reachedEnd。
-2. 配置面板或 WebUI 增加“新群历史同步状态”。
-3. README 明确说明：大群历史消息不是一次完成，默认每轮对账 5000 条。
+2. 配置面板通过 schema 暴露 `dataProviders.QQ.sourceReconcile.batchSize` 和 `preprocessors.historicalBackfill.messageLimit`。
+3. README 明确说明：大群历史消息不是一次完成，两个回填批大小均可在配置面板调整。
 
 ---
 
