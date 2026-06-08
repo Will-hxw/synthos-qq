@@ -108,7 +108,8 @@ describe("AISummarizeTaskHandler", () => {
     const mockImDbAccessService = {
         getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange: vi.fn(),
         getUnsummarizedSessionStatsByGroupId: vi.fn(),
-        getProcessedChatMessagesBySessionId: vi.fn()
+        getProcessedChatMessagesBySessionId: vi.fn(),
+        getActiveDigestSessionBlockStatsByGroupIds: vi.fn()
     };
     const mockAgcDbAccessService = {
         tryClaimSessionForDigest: vi.fn(),
@@ -137,6 +138,7 @@ describe("AISummarizeTaskHandler", () => {
         });
         mockImDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange.mockResolvedValue([]);
         mockImDbAccessService.getUnsummarizedSessionStatsByGroupId.mockResolvedValue([]);
+        mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds.mockResolvedValue([]);
         mockImDbAccessService.getProcessedChatMessagesBySessionId.mockImplementation(async (sessionId: string) => [
             createMessage(`${sessionId}-msg-1`, "group-a", sessionId, 1000)
         ]);
@@ -402,6 +404,30 @@ describe("AISummarizeTaskHandler", () => {
 
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("repair failed"));
         expect(mockSubmitTasks).not.toHaveBeenCalled();
+    });
+
+    it("本轮无任务但存在保护窗口内 session 时应记录诊断日志", async () => {
+        mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds.mockResolvedValue([
+            {
+                status: "processing",
+                sessionCount: 16,
+                messageCount: 1700,
+                earliestRetryTime: 2_000_000,
+                latestUpdateTime: 1_000_000
+            }
+        ]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds).toHaveBeenCalledWith(["group-a"]);
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("16 个 processing session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("最早重试时间"));
     });
 });
 

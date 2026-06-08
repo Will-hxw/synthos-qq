@@ -184,6 +184,10 @@ export class AISummarizeTaskHandler {
                     `共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=${config.ai.maxConcurrentRequests}）`
                 );
 
+                if (allTasks.length === 0) {
+                    await this._logActiveDigestSessionBlocks(attrs.groupIds);
+                }
+
                 // 并行处理所有任务，每个任务完成时回调
                 let completedCount = 0;
 
@@ -378,6 +382,20 @@ export class AISummarizeTaskHandler {
         } catch (error) {
             this.LOGGER.error(`修复终态摘要 session 追加消息失败: ${this._formatErrorMessage(error)}`);
             throw error;
+        }
+    }
+
+    /**
+     * 记录仍在摘要保护窗口内、会暂时阻止本轮重新摘要的 session。
+     * @param groupIds 群组ID列表
+     */
+    private async _logActiveDigestSessionBlocks(groupIds: string[]): Promise<void> {
+        const blockStats = await this.imDbAccessService.getActiveDigestSessionBlockStatsByGroupIds(groupIds);
+
+        for (const stats of blockStats) {
+            this.LOGGER.warning(
+                `本轮未收集到摘要任务，但检测到 ${stats.sessionCount} 个 ${stats.status} session 仍在摘要保护窗口内，消息数=${stats.messageCount}，最早重试时间=${this._formatTimestamp(stats.earliestRetryTime)}`
+            );
         }
     }
 

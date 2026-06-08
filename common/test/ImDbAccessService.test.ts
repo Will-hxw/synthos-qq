@@ -81,6 +81,42 @@ describe("ImDbAccessService", () => {
         expect(params).toEqual(["group-a", expect.any(Number), 10]);
     });
 
+    it("摘要阻塞诊断应统计保护窗口内的processing和failed session", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            {
+                status: "processing",
+                sessionCount: 16,
+                messageCount: 1700,
+                earliestRetryTime: 2000,
+                latestUpdateTime: 1000
+            }
+        ]);
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getActiveDigestSessionBlockStatsByGroupIds(["group-a", "group-b", "group-a"]);
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM ai_digest_sessions ds");
+        expect(sql).toContain("INNER JOIN chat_messages cm ON cm.sessionId = ds.sessionId");
+        expect(sql).toContain("cm.groupId IN (?, ?)");
+        expect(sql).toContain("ds.status = 'processing'");
+        expect(sql).toContain("ds.status = 'failed'");
+        expect(sql).toContain("COALESCE(ds.processingStartedAt, ds.updateTime)");
+        expect(params).toEqual([expect.any(Number), "group-a", "group-b", expect.any(Number), expect.any(Number)]);
+        expect(result).toEqual([
+            {
+                status: "processing",
+                sessionCount: 16,
+                messageCount: 1700,
+                earliestRetryTime: 2000,
+                latestUpdateTime: 1000
+            }
+        ]);
+    });
+
     it("摘要覆盖诊断应按群和时间范围只读聚合三表状态", async () => {
         mockCommonDBService.get.mockResolvedValue({
             messageCount: 3,

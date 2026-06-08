@@ -29,6 +29,14 @@ export interface SessionStats {
     timeEnd: number;
 }
 
+export interface ActiveDigestSessionBlockStats {
+    status: string;
+    sessionCount: number;
+    messageCount: number;
+    earliestRetryTime: number;
+    latestUpdateTime: number;
+}
+
 export interface DigestCoverageRawMessageStats {
     messageCount: number;
     assignedMessageCount: number;
@@ -478,6 +486,48 @@ export class ImDbAccessService extends Disposable {
              ORDER BY timeEnd ASC
              LIMIT ?`,
             [groupId, staleBefore, resolvedLimit]
+        );
+    }
+
+    /**
+     * 统计当前仍处于摘要保护窗口内、会暂时阻止重新摘要的 session。
+     * @param groupIds 群组ID列表
+     * @returns 按摘要状态聚合的阻塞统计
+     */
+    public async getActiveDigestSessionBlockStatsByGroupIds(
+        groupIds: string[]
+    ): Promise<ActiveDigestSessionBlockStats[]> {
+        const uniqueGroupIds = [...new Set(groupIds)];
+
+        if (uniqueGroupIds.length === 0) {
+            return [];
+        }
+
+        const groupPlaceholders = uniqueGroupIds.map(() => "?").join(", ");
+        const staleBefore = Date.now() - AIDIGEST_SESSION_STALE_MS;
+
+        return await this.db.all<ActiveDigestSessionBlockStats>(
+            `SELECT
+                ds.status AS status,
+                COUNT(DISTINCT ds.sessionId) AS sessionCount,
+                COUNT(DISTINCT cm.msgId) AS messageCount,
+                MIN(
+                    CASE
+                        WHEN ds.status = 'processing' THEN COALESCE(ds.processingStartedAt, ds.updateTime)
+                        ELSE ds.updateTime
+                    END
+                ) + ? AS earliestRetryTime,
+                MAX(ds.updateTime) AS latestUpdateTime
+             FROM ai_digest_sessions ds
+             INNER JOIN chat_messages cm ON cm.sessionId = ds.sessionId
+             WHERE cm.groupId IN (${groupPlaceholders})
+               AND (
+                    (ds.status = 'processing' AND COALESCE(ds.processingStartedAt, ds.updateTime) >= ?)
+                    OR (ds.status = 'failed' AND ds.updateTime >= ?)
+               )
+             GROUP BY ds.status
+             ORDER BY earliestRetryTime ASC, ds.status ASC`,
+            [AIDIGEST_SESSION_STALE_MS, ...uniqueGroupIds, staleBefore, staleBefore]
         );
     }
 
