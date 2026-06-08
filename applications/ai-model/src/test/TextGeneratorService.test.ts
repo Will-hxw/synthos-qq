@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TextGeneratorService, registerReasoningContent } from "../services/generators/text/TextGeneratorService";
 
-const { mockChatOpenAIConstructor, mockLogger } = vi.hoisted(() => ({
+const { mockChatOpenAIConstructor, mockChatOpenAIStreamFactories, mockLogger } = vi.hoisted(() => ({
     mockChatOpenAIConstructor: vi.fn(),
+    mockChatOpenAIStreamFactories: [] as Array<
+        () => AsyncIterableIterator<any> | Promise<AsyncIterableIterator<any>>
+    >,
     mockLogger: {
         debug: vi.fn(),
         info: vi.fn(),
@@ -22,6 +25,20 @@ vi.mock("@langchain/openai", () => ({
     ChatOpenAI: class MockChatOpenAI {
         public constructor(options: unknown) {
             mockChatOpenAIConstructor(options);
+        }
+
+        public bindTools(): MockChatOpenAI {
+            return this;
+        }
+
+        public async stream(): Promise<AsyncIterableIterator<any>> {
+            const factory = mockChatOpenAIStreamFactories.shift();
+
+            if (!factory) {
+                return (async function* () {})();
+            }
+
+            return factory();
         }
     }
 }));
@@ -45,10 +62,11 @@ describe("TextGeneratorService", () => {
 
     beforeEach(async () => {
         vi.clearAllMocks();
+        mockChatOpenAIStreamFactories.length = 0;
         tempLogDir = await mkdtemp(join(tmpdir(), "text-generator-service-"));
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
             ai: {
-                pinnedModels: []
+                defaultModelNames: ["default-model"]
             },
             logger: {
                 logDirectory: tempLogDir
@@ -93,6 +111,19 @@ describe("TextGeneratorService", () => {
         reasoning
     });
 
+    const buildConfigWithDefaultModels = (modelNames: string[]) => ({
+        ai: {
+            models: Object.fromEntries(
+                modelNames.map(modelName => [modelName, buildModelConfig({ enabled: false, effort: "minimal" })])
+            ),
+            defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
+            defaultModelNames: modelNames
+        },
+        logger: {
+            logDirectory: tempLogDir
+        }
+    });
+
     async function getReasoningAwareFetch(): Promise<typeof fetch> {
         mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce({
             ai: {
@@ -100,7 +131,7 @@ describe("TextGeneratorService", () => {
                     "deepseek-v4-pro": buildModelConfig({ enabled: false, effort: "minimal" })
                 },
                 defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
-                pinnedModels: []
+                defaultModelNames: ["deepseek-v4-pro"]
             },
             logger: {
                 logDirectory: tempLogDir
@@ -121,7 +152,7 @@ describe("TextGeneratorService", () => {
                     "plain-model": buildModelConfig({ enabled: false, effort: "minimal" })
                 },
                 defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
-                pinnedModels: []
+                defaultModelNames: ["plain-model"]
             },
             logger: {
                 logDirectory: tempLogDir
@@ -142,7 +173,7 @@ describe("TextGeneratorService", () => {
                     "reasoning-model": buildModelConfig({ enabled: true, effort: "low" })
                 },
                 defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
-                pinnedModels: []
+                defaultModelNames: ["reasoning-model"]
             },
             logger: {
                 logDirectory: tempLogDir
@@ -384,6 +415,47 @@ describe("TextGeneratorService", () => {
         });
     });
 
+    it("候选模型不应混入默认模型列表", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockResolvedValue('[{"ok":true}]');
+
+        const result = await service.generateTextWithModelCandidates(["scoped-model"], "生成 JSON", true);
+
+        expect(result.selectedModelName).toBe("scoped-model");
+        expect(doGenerateTextStream).toHaveBeenCalledWith("scoped-model", "生成 JSON");
+        expect(doGenerateTextStream).not.toHaveBeenCalledWith("default-model", expect.any(String));
+    });
+
+    it("候选模型应按传入顺序去重后重复三轮", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockRejectedValue(new Error("模型失败"));
+
+        await expect(
+            service.generateTextWithModelCandidates(
+                ["first-model", "second-model", "first-model"],
+                "生成 JSON",
+                true
+            )
+        ).rejects.toThrow("所有模型都生成摘要失败");
+
+        expect(doGenerateTextStream.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+            "first-model",
+            "second-model",
+            "first-model",
+            "second-model",
+            "first-model",
+            "second-model"
+        ]);
+    });
+
+    it("候选模型列表为空时应直接失败", async () => {
+        await expect(service.generateTextWithModelCandidates([], "生成内容", false)).rejects.toThrow(
+            "模型候选列表不能为空"
+        );
+    });
+
     it("候选模型单次失败应记录 warning 而不是 error", async () => {
         const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
 
@@ -430,6 +502,23 @@ describe("TextGeneratorService", () => {
         expect(chunks).toEqual(["ok"]);
         expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("模型 bad-model 流式生成失败"));
         expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it("流式候选模型不应混入默认模型列表", async () => {
+        const doStreamText = vi.spyOn(service as any, "doStreamText") as any;
+
+        doStreamText.mockImplementationOnce(
+            async (_modelName: string, _input: string, onChunk: (chunk: string) => void) => {
+                onChunk("ok");
+
+                return "ok";
+            }
+        );
+
+        await service.generateTextStreamWithModelCandidates(["stream-model"], "生成内容", () => {});
+
+        expect(doStreamText).toHaveBeenCalledWith("stream-model", "生成内容", expect.any(Function));
+        expect(doStreamText).not.toHaveBeenCalledWith("default-model", expect.any(String), expect.any(Function));
     });
 
     it("JSON 校验失败后应先尝试修复看起来像 JSON 的响应", async () => {
@@ -740,5 +829,75 @@ describe("TextGeneratorService", () => {
         });
         // 限流错误应触发 sleep 退避
         expect(sleep).toHaveBeenCalled();
+    });
+
+    it("Agent 默认模型应在首个输出前失败时尝试下一个默认候选", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce(
+            buildConfigWithDefaultModels(["bad-agent-model", "good-agent-model"])
+        );
+        mockChatOpenAIStreamFactories.push(
+            () =>
+                (async function* () {
+                    throw new Error("建流失败");
+                })(),
+            () =>
+                (async function* () {
+                    yield { content: "ok" };
+                })()
+        );
+        const constructorCallStart = mockChatOpenAIConstructor.mock.calls.length;
+
+        const stream = await service.streamWithMessages(undefined, [] as any[]);
+        const chunks: any[] = [];
+
+        for await (const chunk of stream) {
+            chunks.push(chunk);
+        }
+
+        expect(chunks).toEqual([{ content: "ok" }]);
+        expect(
+            mockChatOpenAIConstructor.mock.calls
+                .slice(constructorCallStart)
+                .map(call => (call[0] as Record<string, unknown>).model)
+        ).toEqual(["bad-agent-model", "good-agent-model"]);
+        expect(mockLogger.warning).toHaveBeenCalledWith(
+            expect.stringContaining("Agent 模型 bad-agent-model 建流失败")
+        );
+    });
+
+    it("Agent 默认模型在已经输出后失败时不应切换候选模型", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce(
+            buildConfigWithDefaultModels(["first-agent-model", "second-agent-model"])
+        );
+        mockChatOpenAIStreamFactories.push(
+            () =>
+                (async function* () {
+                    yield { content: "partial" };
+                    throw new Error("输出后失败");
+                })(),
+            () =>
+                (async function* () {
+                    yield { content: "should-not-run" };
+                })()
+        );
+        const constructorCallStart = mockChatOpenAIConstructor.mock.calls.length;
+
+        const stream = await service.streamWithMessages(undefined, [] as any[]);
+        const chunks: any[] = [];
+
+        await expect(
+            (async () => {
+                for await (const chunk of stream) {
+                    chunks.push(chunk);
+                }
+            })()
+        ).rejects.toThrow("输出后失败");
+
+        expect(chunks).toEqual([{ content: "partial" }]);
+        expect(
+            mockChatOpenAIConstructor.mock.calls
+                .slice(constructorCallStart)
+                .map(call => (call[0] as Record<string, unknown>).model)
+        ).toEqual(["first-agent-model"]);
     });
 });

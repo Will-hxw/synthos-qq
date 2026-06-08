@@ -52,7 +52,7 @@
             }
         },
         "defaultModelName": "example-model",
-        "pinnedModels": ["example-model"],
+        "defaultModelNames": ["example-model"],
         "maxConcurrentRequests": 10,
         "context": {
             "backgroundKnowledge": {

@@ -378,4 +378,32 @@ describe("LangGraphAgentExecutor", () => {
         expect((normalizedMessages[2] as any).tool_call_id).toBe("old-call__dup_1");
         expect(() => (executor as any)._validatePromptMessages(normalizedMessages)).not.toThrow();
     });
+
+    it("应将默认模型选择交给 TextGeneratorService 处理", async () => {
+        async function* streamWithMessages() {
+            yield { content: "ok" };
+        }
+
+        const streamWithMessagesMock = vi.fn().mockReturnValue(streamWithMessages());
+        const executor = new LangGraphAgentExecutor(
+            {
+                streamWithMessages: streamWithMessagesMock
+            } as any,
+            {} as any,
+            {} as any
+        );
+
+        await (executor as any)._callLLMStream({
+            messages: [],
+            tools: [],
+            enabledTools: [],
+            conversationId: "conversation-1",
+            onChunk: vi.fn(),
+            temperature: undefined,
+            maxTokens: undefined,
+            abortSignal: undefined
+        });
+
+        expect(streamWithMessagesMock).toHaveBeenCalledWith(undefined, [], [], undefined, undefined, undefined);
+    });
 });

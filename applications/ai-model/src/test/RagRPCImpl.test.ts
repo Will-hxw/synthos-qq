@@ -420,6 +420,8 @@ describe("RagRPCImpl", () => {
             {} as any
         );
 
+        (rpcImpl as any).defaultModelNames = ["default-model-a", "default-model-b"];
+
         const output = await rpcImpl.ask({
             question: "测试问题",
             topK: 2,
@@ -432,6 +434,10 @@ describe("RagRPCImpl", () => {
         expect(references[0].relevance).toBeCloseTo(0.5, 6);
         expect(references[1]).toMatchObject({ topicId: "topic-2", topic: "话题2" });
         expect(references[1].relevance).toBeCloseTo(0, 6);
+        expect(textGeneratorService.generateTextWithModelCandidates).toHaveBeenCalledWith(
+            ["default-model-a", "default-model-b"],
+            "prompt"
+        );
     });
 
     it("askStream 应按 L2 距离公式发送引用相关度", async () => {
@@ -477,6 +483,8 @@ describe("RagRPCImpl", () => {
             {} as any,
             {} as any
         );
+
+        (rpcImpl as any).defaultModelNames = ["default-model-a", "default-model-b"];
         const chunks: any[] = [];
 
         await rpcImpl.askStream(
@@ -493,5 +501,10 @@ describe("RagRPCImpl", () => {
         expect(referenceChunk?.references).toHaveLength(2);
         expect(referenceChunk.references[0].relevance).toBeCloseTo(0.5, 6);
         expect(referenceChunk.references[1].relevance).toBeCloseTo(0, 6);
+        expect(textGeneratorService.generateTextStreamWithModelCandidates).toHaveBeenCalledWith(
+            ["default-model-a", "default-model-b"],
+            "prompt",
+            expect.any(Function)
+        );
     });
 });

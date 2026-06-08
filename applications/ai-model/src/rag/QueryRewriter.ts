@@ -12,11 +12,11 @@ import { RagPromptStore } from "../context/prompts/RagPromptStore";
 export class QueryRewriter {
     private LOGGER = Logger.withTag("QueryRewriter");
     private TextGeneratorService: TextGeneratorService;
-    private modelName: string;
+    private modelNames: string[];
 
-    constructor(TextGeneratorService: TextGeneratorService, modelName: string) {
+    constructor(TextGeneratorService: TextGeneratorService, modelNames: string[]) {
         this.TextGeneratorService = TextGeneratorService;
-        this.modelName = modelName;
+        this.modelNames = modelNames;
     }
 
     /**
@@ -61,7 +61,7 @@ export class QueryRewriter {
 
         // 2. 调用 LLM 生成扩展查询
         const { content: response } = await this.TextGeneratorService.generateTextWithModelCandidates(
-            [this.modelName],
+            this.modelNames,
             prompt
         );
 

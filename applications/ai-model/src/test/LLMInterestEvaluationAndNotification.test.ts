@@ -47,7 +47,8 @@ vi.mock("@root/common/scheduler/agenda", () => ({
 
 vi.mock("@root/common/util/Logger", () => ({
     default: {
-        withTag: () => mockLogger
+        withTag: () => mockLogger,
+        warning: mockLogger.warning
     }
 }));
 
@@ -107,6 +108,7 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
             ai: {
                 defaultModelName: "mock-model",
+                defaultModelNames: ["default-model-a", "default-model-b"],
                 interestScore: {
                     llmEvaluationDescriptions: ["技术讨论"],
                     llmEvaluationBatchSize: 10
@@ -242,5 +244,42 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
         expect(mockNotificationPut).toHaveBeenCalledWith("topic-1", true);
         expect(mockEvaluationDel).not.toHaveBeenCalled();
         expect(mockLogger.success).toHaveBeenCalledWith("邮件通知发送成功");
+    });
+
+    it("批量兴趣评估应使用默认模型候选列表", async () => {
+        mockTextGeneratorService.generateTextWithModelCandidates.mockResolvedValue({
+            content: "[true]",
+            selectedModelName: "default-model-a"
+        });
+        const handler = new LLMInterestEvaluationAndNotificationTaskHandler(
+            mockConfigManagerService as any,
+            mockImDbAccessService as any,
+            mockAgcDbAccessService as any,
+            mockTextGeneratorService as any,
+            mockInterestEmailService as any
+        );
+
+        const result = await (handler as any)._evaluateTopicsBatch(
+            ["技术讨论"],
+            [
+                {
+                    topicId: "topic-1",
+                    sessionId: "session-1",
+                    topic: "测试话题",
+                    detail: "测试详情",
+                    contributors: "[]",
+                    modelName: "mock-model",
+                    updateTime: 1
+                }
+            ],
+            ["default-model-a", "default-model-b"]
+        );
+
+        expect(result).toEqual([true]);
+        expect(mockTextGeneratorService.generateTextWithModelCandidates).toHaveBeenCalledWith(
+            ["default-model-a", "default-model-b"],
+            expect.any(String),
+            false
+        );
     });
 });

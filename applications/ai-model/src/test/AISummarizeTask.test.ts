@@ -174,6 +174,7 @@ describe("AISummarizeTaskHandler", () => {
             groupId: "group-a",
             sessionId: "small-session"
         });
+        expect(mockSubmitTasks.mock.calls[0][0][0].modelNames).toEqual(["mock-model"]);
         expect(mockAgcDbAccessService.commitSessionDigest).toHaveBeenCalledOnce();
     });
 

@@ -181,7 +181,7 @@ cp synthos_config.example.json synthos_config.json
       }
     },
     "defaultModelName": "my-model",
-    "pinnedModels": ["my-model"],
+    "defaultModelNames": ["my-model"],
     "defaultModelConfig": {
       "apiKey": "sk-your-api-key-here",
       "baseURL": "https://api.example.com/v1",

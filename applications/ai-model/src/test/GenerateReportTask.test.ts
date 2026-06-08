@@ -137,6 +137,10 @@ describe("GenerateReportTaskHandler", () => {
                 summaryStatus: "success"
             })
         );
+        expect(mockTextGeneratorService.generateTextWithModelCandidates).toHaveBeenCalledWith(
+            ["mock-model"],
+            expect.any(String)
+        );
     });
 
     it("不应从全量摘要中按 updateTime 捞取未命中聊天时间的 topic", async () => {

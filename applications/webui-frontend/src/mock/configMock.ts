@@ -10,6 +10,10 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后生效。";
 
 let baseConfig: Record<string, unknown> = {
+    ai: {
+        defaultModelName: "example-model",
+        defaultModelNames: ["example-model"]
+    },
     report: {
         generation: {
             interestScoreThreshold: 0.2,
@@ -33,6 +37,27 @@ const buildMockSchema = (): JsonSchema => {
         title: "Synthos 配置（Mock）",
         description: "用于前端 Mock 展示的简化 Schema，仅覆盖常见字段。",
         properties: {
+            ai: {
+                type: "object",
+                title: "AI",
+                properties: {
+                    defaultModelName: {
+                        type: "string",
+                        title: "默认兜底模型",
+                        default: "example-model"
+                    },
+                    defaultModelNames: {
+                        type: "array",
+                        title: "默认模型列表",
+                        description: "默认候选模型列表，按优先级排序。",
+                        items: {
+                            type: "string"
+                        },
+                        default: ["example-model"]
+                    }
+                },
+                required: ["defaultModelName", "defaultModelNames"]
+            },
             report: {
                 type: "object",
                 title: "日报",
@@ -97,7 +122,7 @@ const buildMockSchema = (): JsonSchema => {
                 required: ["timezone"]
             }
         },
-        required: ["report", "rag", "system"]
+        required: ["ai", "report", "rag", "system"]
     };
 };
 

@@ -124,7 +124,7 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
                         const evaluationResults = await this._evaluateTopicsBatch(
                             llmEvaluationDescriptions,
                             batch,
-                            config.ai.defaultModelName
+                            config.ai.defaultModelNames
                         );
 
                         await Promise.all(
@@ -274,13 +274,13 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
      * 批量评估话题的兴趣度
      * @param userInterestDescriptions 用户感兴趣的内容描述列表
      * @param topics 待评估的话题列表
-     * @param modelName LLM模型名称
+     * @param modelNames LLM 模型候选列表
      * @returns boolean数组，每个元素表示对应话题是否感兴趣
      */
     private async _evaluateTopicsBatch(
         userInterestDescriptions: string[],
         topics: AIDigestResult[],
-        modelName: string
+        modelNames: string[]
     ): Promise<boolean[]> {
         // 构建提示词
         const topicsForPrompt = topics.map(t => ({
@@ -298,7 +298,7 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
         const responseText = await retryAsync(
             async () => {
                 const result = await this.textGeneratorService.generateTextWithModelCandidates(
-                    [modelName],
+                    modelNames,
                     prompt,
                     false
                 );

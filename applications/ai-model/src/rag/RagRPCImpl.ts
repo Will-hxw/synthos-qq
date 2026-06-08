@@ -51,7 +51,7 @@ import { QueryRewriter } from "./QueryRewriter";
 export class RagRPCImpl implements RAGRPCImplementation {
     private LOGGER = Logger.withTag("RagRPCImpl");
     private queryRewriter: QueryRewriter;
-    private defaultModelName: string = "";
+    private defaultModelNames: string[] = [];
 
     public constructor(
         @inject(COMMON_TOKENS.ConfigManagerService) private configManagerService: ConfigManagerService,
@@ -77,9 +77,9 @@ export class RagRPCImpl implements RAGRPCImplementation {
     public async init(): Promise<void> {
         const config = await this.configManagerService.getCurrentConfig();
 
-        this.defaultModelName = config.ai.defaultModelName;
+        this.defaultModelNames = config.ai.defaultModelNames;
         // 创建 QueryRewriter 实例
-        this.queryRewriter = new QueryRewriter(this.TextGeneratorService, this.defaultModelName);
+        this.queryRewriter = new QueryRewriter(this.TextGeneratorService, this.defaultModelNames);
         // 初始化 RAGCtxBuilder
         await this.ragCtxBuilder.init();
     }
@@ -192,7 +192,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
         // 6. 调用 LLM 生成回答
         const { content: answer } = await this.TextGeneratorService.generateTextWithModelCandidates(
-            [this.defaultModelName],
+            this.defaultModelNames,
             prompt
         );
 
@@ -273,7 +273,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
             // 7. 调用 LLM 生成回答（流式）
             await this.TextGeneratorService.generateTextStreamWithModelCandidates(
-                [this.defaultModelName],
+                this.defaultModelNames,
                 prompt,
                 chunk => {
                     onChunk({ type: "content", content: chunk });

@@ -38,7 +38,7 @@ export const GroupConfigSchema = z.object({
     groupName: z.string().default("").describe("群名称，用于前端展示；为空时使用群号"),
     splitStrategy: z.enum(["realtime", "accumulative"]).describe("消息分割策略"),
     groupIntroduction: z.string().describe("群简介，用于拼接在 context 里面"),
-    aiModels: z.array(z.string()).describe("要使用的 AI 模型名列表，按优先级排序")
+    aiModels: z.array(z.string()).min(1, "至少配置一个 AI 模型").describe("要使用的 AI 模型名列表，按优先级排序")
 });
 
 /**
@@ -92,7 +92,10 @@ export const ReportConfigSchema = z
                         "兴趣分数阈值。如果话题的兴趣度评分小于这个值，在生成周报的时候该话题会被丢弃；若大于等于这个值或者不存在兴趣度评分，则会被保留"
                     ),
                 llmRetryCount: z.number().int().min(0).describe("LLM 调用失败重试次数"),
-                aiModels: z.array(z.string()).describe("用于生成日报综述的 AI 模型列表，按优先级排序")
+                aiModels: z
+                    .array(z.string())
+                    .min(1, "至少配置一个 AI 模型")
+                    .describe("用于生成日报综述的 AI 模型列表，按优先级排序")
             })
             .describe("日报生成配置")
     })
@@ -174,7 +177,10 @@ export const GlobalConfigObjectSchema = z.object({
             models: z.record(z.string(), ModelConfigSchema).describe("模型配置映射"),
             defaultModelConfig: ModelConfigSchema.describe("默认模型配置"),
             defaultModelName: z.string().describe("默认模型名称"),
-            pinnedModels: z.array(z.string()).describe("固定模型列表"),
+            defaultModelNames: z
+                .array(z.string())
+                .min(1, "至少配置一个默认 AI 模型")
+                .describe("默认 AI 模型候选列表，按优先级排序"),
             maxConcurrentRequests: z
                 .number()
                 .positive()
@@ -221,6 +227,7 @@ export const GlobalConfigObjectSchema = z.object({
                 })
                 .describe("RPC 服务配置")
         })
+        .strict()
         .describe("AI 配置"),
 
     webUI_Backend: z
@@ -315,9 +322,9 @@ export const GlobalConfigSchema = GlobalConfigObjectSchema.superRefine((config, 
         addMissingModelIssue(ctx, ["ai", "defaultModelName"], config.ai.defaultModelName);
     }
 
-    config.ai.pinnedModels.forEach((modelName, index) => {
+    config.ai.defaultModelNames.forEach((modelName, index) => {
         if (!hasConfiguredModel(models, modelName)) {
-            addMissingModelIssue(ctx, ["ai", "pinnedModels", index], modelName);
+            addMissingModelIssue(ctx, ["ai", "defaultModelNames", index], modelName);
         }
     });
 

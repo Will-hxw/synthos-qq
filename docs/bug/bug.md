@@ -8,7 +8,7 @@
 
 1. Node v24.5.0 保留；已补充原生依赖安装说明，并通过本机 `pnpm install --frozen-lockfile` 与完整应用构建验证。
 2. 配置面板不自动创建主配置；缺少 `synthos_config.json`、JSON 无效或模型引用无效时返回并展示明确错误。
-3. `ai.models`、`ai.defaultModelName`、`ai.pinnedModels`、`groupConfigs.*.aiModels`、`report.generation.aiModels` 已加入交叉校验。
+3. `ai.models`、`ai.defaultModelName`、`ai.defaultModelNames`、`groupConfigs.*.aiModels`、`report.generation.aiModels` 已加入交叉校验。
 4. `reasoning` 默认关闭，只有模型配置显式启用时才透传给 `ChatOpenAI`。
 5. QQ 原库对账会写入最近扫描状态，WebUI 新增 `/api/setup-status` 与空态提示。
 6. 启动脚本已把 orchestrator 放到 worker 后面，orchestrator 启动时会等待 Pipeline worker 注册完成。
@@ -31,7 +31,7 @@
 
 3. **模型配置容易“看起来配置了，实际跑不起来”**
 
-   目前 `ai.models`、`pinnedModels`、`groupConfigs.*.aiModels` 之间没有交叉校验。用户填错模型名时不会在配置阶段报错，而是在运行 LLM 时才失败。
+   目前 `ai.models`、`defaultModelNames`、`groupConfigs.*.aiModels` 之间没有交叉校验。用户填错模型名时不会在配置阶段报错，而是在运行 LLM 时才失败。
 
 4. **新群导入 / 历史消息回填仍有边界问题**
 

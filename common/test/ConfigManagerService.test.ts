@@ -118,7 +118,7 @@ const mockMainConfig = {
             }
         },
         defaultModelName: "gpt-4",
-        pinnedModels: [],
+        defaultModelNames: ["gpt-4"],
         maxConcurrentRequests: 5,
         context: {
             backgroundKnowledge: {
@@ -630,6 +630,10 @@ describe("ConfigManagerService", () => {
             expect(typeof schema).toBe("object");
             // JSON Schema 应该有基本结构（可能在根对象或 definitions 中）
             expect(schema).toHaveProperty("$schema");
+            const schemaText = JSON.stringify(schema);
+
+            expect(schemaText).toContain("defaultModelNames");
+            expect(schemaText).not.toContain("pinnedModels");
         });
     });
 
@@ -712,6 +716,90 @@ describe("ConfigManagerService", () => {
 
             expect(result.success).toBe(false);
             expect("errors" in result && result.errors.some(error => error.includes("missing-model"))).toBe(true);
+        });
+
+        it("默认模型列表引用不存在时应返回失败", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...mockMainConfig.ai,
+                    defaultModelNames: ["missing-default-model"]
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect(
+                "errors" in result && result.errors.some(error => error.includes("missing-default-model"))
+            ).toBe(true);
+        });
+
+        it("默认模型列表为空时应返回失败", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...mockMainConfig.ai,
+                    defaultModelNames: []
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("defaultModelNames"))).toBe(
+                true
+            );
+        });
+
+        it("群模型列表为空时应返回失败", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                groupConfigs: {
+                    "123456": {
+                        ...mockMainConfig.groupConfigs["123456"],
+                        aiModels: []
+                    }
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("aiModels"))).toBe(true);
+        });
+
+        it("日报模型列表为空时应返回失败", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                report: {
+                    ...mockMainConfig.report,
+                    generation: {
+                        ...mockMainConfig.report.generation,
+                        aiModels: []
+                    }
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("aiModels"))).toBe(true);
+        });
+
+        it("旧的 pinnedModels 字段不应被接受", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...mockMainConfig.ai,
+                    pinnedModels: ["gpt-4"]
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("pinnedModels"))).toBe(true);
         });
     });
 

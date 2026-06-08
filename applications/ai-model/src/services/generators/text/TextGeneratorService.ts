@@ -470,6 +470,28 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 按传入顺序对模型列表去重，并拒绝空候选。
+     */
+    private _dedupeModelNames(modelNames: string[]): string[] {
+        const deduped = [...new Set(modelNames)];
+
+        if (deduped.length === 0) {
+            throw new Error("模型候选列表不能为空");
+        }
+
+        return deduped;
+    }
+
+    /**
+     * 普通文本生成候选列表：保序去重后重复三轮，保留既有重试语义。
+     */
+    private _buildRepeatedModelCandidates(modelNames: string[]): string[] {
+        const deduped = this._dedupeModelNames(modelNames);
+
+        return [...deduped, ...deduped, ...deduped];
+    }
+
+    /**
      * 无状态的、带重试机制的、带候选机制的流式文本生成方法
      * @param modelNames 模型候选列表
      * @param input 输入文本
@@ -483,10 +505,7 @@ export class TextGeneratorService extends Disposable {
         selectedModelName: string;
         content: string;
     }> {
-        const config = await this.configManagerService.getCurrentConfig();
-        const deduped = [...new Set([...config.ai.pinnedModels, ...modelNames])];
-        const modelCandidates = [...deduped, ...deduped, ...deduped];
-
+        const modelCandidates = this._buildRepeatedModelCandidates(modelNames);
         let resultStr = "";
         let selectedModelName = "";
 
@@ -820,7 +839,7 @@ export class TextGeneratorService extends Disposable {
 
     /**
      * 无状态的、带重试机制的、带候选机制的文本生成方法
-     * @param modelNames 模型候选列表，允许为空。如果为空，则只使用置顶的的模型候选列表
+     * @param modelNames 模型候选列表，不能为空，按调用方传入顺序保序去重后重试
      * @param input 输入文本
      * @param 是否对输出强校验json格式
      * @returns
@@ -834,10 +853,9 @@ export class TextGeneratorService extends Disposable {
         selectedModelName: string;
         content: string;
     }> {
-        const config = await this.configManagerService.getCurrentConfig();
         // 去重后整表重复3次：单次风控拒绝不代表下次还拒，给每个模型多次机会
-        const deduped = [...new Set([...config.ai.pinnedModels, ...modelNames])];
-        const modelCandidates = [...deduped, ...deduped, ...deduped];
+        const modelCandidates = this._buildRepeatedModelCandidates(modelNames);
+        const config = await this.configManagerService.getCurrentConfig();
         let resultStr = "";
         let selectedModelName = "";
         const MAX_RATE_LIMIT_RETRIES = 2;
@@ -1079,7 +1097,7 @@ export class TextGeneratorService extends Disposable {
     /**
      * 使用消息列表生成文本（流式，支持工具绑定）
      * 适用于 Agent 等需要复杂消息历史和工具调用的场景
-     * @param modelName 模型名称（如果未指定或为 "default"，则使用配置中的第一个置顶模型）
+     * @param modelName 模型名称（如果未指定或为 "default"，则使用默认模型候选列表）
      * @param messages 消息列表
      * @param tools 工具定义（可选）
      * @param temperature 温度参数（可选）
@@ -1099,32 +1117,89 @@ export class TextGeneratorService extends Disposable {
 
         this._registerReasoningContentFromMessages(messages);
 
-        // 如果未指定模型或指定为 "default"，使用配置中的第一个置顶模型
-        const effectiveModelName =
-            !modelName || modelName === "default" ? config.ai.pinnedModels[0] || "gpt-4" : modelName;
+        const modelCandidates =
+            !modelName || modelName === "default"
+                ? this._dedupeModelNames(config.ai.defaultModelNames)
+                : [modelName];
 
-        this.LOGGER.info(`Agent 使用模型: ${effectiveModelName}`);
-
-        // 创建独立的模型实例
-        let chatModel = new ChatOpenAI(
-            this._buildChatOpenAIOptions(config, effectiveModelName, temperature, maxTokens)
+        return this._streamWithMessageModelCandidates(
+            config,
+            modelCandidates,
+            messages,
+            tools,
+            temperature,
+            maxTokens,
+            abortSignal
         );
+    }
 
-        // 如果提供了工具，绑定工具并返回流
+    private async _createMessageStreamForModel(
+        config: GlobalConfig,
+        modelName: string,
+        messages: BaseMessage[],
+        tools?: any[],
+        temperature?: number,
+        maxTokens?: number,
+        abortSignal?: AbortSignal
+    ): Promise<AsyncIterableIterator<any>> {
+        this.LOGGER.info(`Agent 使用模型: ${modelName}`);
+
+        const chatModel = new ChatOpenAI(this._buildChatOpenAIOptions(config, modelName, temperature, maxTokens));
+
         if (tools && tools.length > 0) {
             this.LOGGER.info(`绑定 ${tools.length} 个工具到 ChatModel`);
-            // 使用 bindTools 绑定工具，并通过 stream 的第二个参数传递 tool_choice
             const boundModel = chatModel.bindTools(tools);
 
-            this.LOGGER.info(`尝试启用强制工具调用模式 (tool_choice: "auto")`);
+            this.LOGGER.info(`尝试启用工具调用模式 (tool_choice: "auto")`);
 
             return boundModel.stream(messages, {
                 signal: abortSignal
-                // 注意：部分模型可能不支持 tool_choice，需要测试
             });
         }
 
-        // 返回流式迭代器
         return chatModel.stream(messages, { signal: abortSignal });
+    }
+
+    private async *_streamWithMessageModelCandidates(
+        config: GlobalConfig,
+        modelNames: string[],
+        messages: BaseMessage[],
+        tools?: any[],
+        temperature?: number,
+        maxTokens?: number,
+        abortSignal?: AbortSignal
+    ): AsyncIterableIterator<any> {
+        for (const modelName of modelNames) {
+            let hasYieldedChunk = false;
+
+            try {
+                const stream = await this._createMessageStreamForModel(
+                    config,
+                    modelName,
+                    messages,
+                    tools,
+                    temperature,
+                    maxTokens,
+                    abortSignal
+                );
+
+                for await (const chunk of stream) {
+                    hasYieldedChunk = true;
+                    yield chunk;
+                }
+
+                return;
+            } catch (error) {
+                if (hasYieldedChunk) {
+                    throw error;
+                }
+
+                this.LOGGER.warning(
+                    `Agent 模型 ${modelName} 建流失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型`
+                );
+            }
+        }
+
+        throw ErrorReasons.ALL_MODELS_FAILED;
     }
 }
