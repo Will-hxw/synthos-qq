@@ -9,6 +9,7 @@ import "./context/middleware/registerAll";
 import { registerAllDependencies } from "./di/container";
 import { AI_MODEL_TOKENS } from "./di/tokens";
 import { AISummarizeTaskHandler } from "./tasks/AISummarize";
+import { ImageUnderstandingTaskHandler } from "./tasks/ImageUnderstanding";
 import { GenerateEmbeddingTaskHandler } from "./tasks/GenerateEmbedding";
 import { GenerateReportTaskHandler } from "./tasks/GenerateReport";
 import { InterestScoreTaskHandler } from "./tasks/InterestScore";
@@ -31,6 +32,9 @@ class AIModelApplication {
         await registerAllDependencies();
 
         // 2. 注册各大任务到 Agenda 调度器
+        await container
+            .resolve<ImageUnderstandingTaskHandler>(AI_MODEL_TOKENS.ImageUnderstandingTaskHandler)
+            .register();
         await container.resolve<AISummarizeTaskHandler>(AI_MODEL_TOKENS.AISummarizeTaskHandler).register();
         await container.resolve<InterestScoreTaskHandler>(AI_MODEL_TOKENS.InterestScoreTaskHandler).register();
         await container

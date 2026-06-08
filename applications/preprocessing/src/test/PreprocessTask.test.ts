@@ -61,6 +61,7 @@ describe("PreprocessTaskHandler", () => {
     };
     const mockImDbAccessService = {
         getRawChatMessageByMsgId: vi.fn(),
+        getChatMessageMediaByMsgIds: vi.fn(),
         storeProcessedChatMessages: vi.fn(),
         getEarliestUnprocessedMessageTimeRangeByGroupId: vi.fn()
     };
@@ -80,6 +81,7 @@ describe("PreprocessTaskHandler", () => {
             }
         });
         mockImDbAccessService.storeProcessedChatMessages.mockResolvedValue(undefined);
+        mockImDbAccessService.getChatMessageMediaByMsgIds.mockResolvedValue(new Map());
         mockImDbAccessService.getEarliestUnprocessedMessageTimeRangeByGroupId.mockResolvedValue(null);
         mockAccumulativeSplitter.assignSessionId.mockResolvedValue([]);
     });

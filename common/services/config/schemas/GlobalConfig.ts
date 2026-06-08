@@ -7,6 +7,9 @@ import { DeepRequired } from "../../../util/type/DeepRequired";
 export const QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT = 50000;
 export const QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX = 50000;
 export const PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT = 5000;
+export const IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT = 1048576;
+export const IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT = 50;
+export const IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT = 30000;
 
 /**
  * AI 模型配置 Schema
@@ -29,6 +32,110 @@ export const ModelConfigSchema = z.object({
         effort: "minimal"
     }).describe("reasoning 参数透传配置")
 });
+
+export const ImageUnderstandingConfigSchema = z
+    .object({
+        enabled: z.boolean().default(false).describe("是否启用图片 OCR 与图片理解"),
+        ocr: z
+            .object({
+                provider: z.literal("ocrspace").default("ocrspace").describe("OCR 服务提供商"),
+                apiKey: z.string().default("").describe("OCR.space API Key"),
+                endpoint: z
+                    .string()
+                    .url()
+                    .default("https://api.ocr.space/parse/image")
+                    .describe("OCR.space API 地址"),
+                language: z.string().default("chs").describe("OCR.space language 参数"),
+                ocrEngine: z.number().int().positive().default(2).describe("OCR.space OCREngine 参数"),
+                scale: z.boolean().default(true).describe("是否启用 OCR.space scale 参数"),
+                detectOrientation: z.boolean().default(true).describe("是否启用 OCR.space detectOrientation 参数"),
+                isOverlayRequired: z.boolean().default(false).describe("是否要求 OCR.space 返回文字框 overlay"),
+                maxImageBytes: z
+                    .number()
+                    .positive()
+                    .int()
+                    .default(IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT)
+                    .describe("OCR.space 免费接口图片大小上限")
+            })
+            .default({
+                provider: "ocrspace",
+                apiKey: "",
+                endpoint: "https://api.ocr.space/parse/image",
+                language: "chs",
+                ocrEngine: 2,
+                scale: true,
+                detectOrientation: true,
+                isOverlayRequired: false,
+                maxImageBytes: IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT
+            })
+            .describe("OCR 配置"),
+        vision: z
+            .object({
+                provider: z
+                    .literal("dashscope-openai-compatible")
+                    .default("dashscope-openai-compatible")
+                    .describe("图片理解模型提供商"),
+                apiKey: z.string().default("").describe("DashScope API Key"),
+                baseURL: z
+                    .string()
+                    .url()
+                    .default("https://dashscope.aliyuncs.com/compatible-mode/v1")
+                    .describe("DashScope OpenAI-compatible API 基础 URL"),
+                modelName: z.string().default("qwen3.6-flash-2026-04-16").describe("图片理解模型名称"),
+                temperature: z.number().min(0).max(2).default(0).describe("图片理解模型温度"),
+                maxTokens: z.number().positive().int().default(2048).describe("图片理解模型最大输出 token")
+            })
+            .default({
+                provider: "dashscope-openai-compatible",
+                apiKey: "",
+                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                modelName: "qwen3.6-flash-2026-04-16",
+                temperature: 0,
+                maxTokens: 2048
+            })
+            .describe("图片理解模型配置"),
+        maxImagesPerRun: z
+            .number()
+            .positive()
+            .int()
+            .default(IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT)
+            .describe("每轮最多处理的图片数量"),
+        retryCount: z.number().int().min(0).default(2).describe("图片理解失败后的重试次数"),
+        requestTimeoutMs: z
+            .number()
+            .positive()
+            .int()
+            .default(IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT)
+            .describe("单次 OCR 或图片理解请求超时时间"),
+        processOnlyNewMessages: z.boolean().default(true).describe("是否只处理当前 pipeline 时间范围内的新消息")
+    })
+    .default({
+        enabled: false,
+        ocr: {
+            provider: "ocrspace",
+            apiKey: "",
+            endpoint: "https://api.ocr.space/parse/image",
+            language: "chs",
+            ocrEngine: 2,
+            scale: true,
+            detectOrientation: true,
+            isOverlayRequired: false,
+            maxImageBytes: IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT
+        },
+        vision: {
+            provider: "dashscope-openai-compatible",
+            apiKey: "",
+            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            modelName: "qwen3.6-flash-2026-04-16",
+            temperature: 0,
+            maxTokens: 2048
+        },
+        maxImagesPerRun: IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT,
+        retryCount: 2,
+        requestTimeoutMs: IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
+        processOnlyNewMessages: true
+    })
+    .describe("图片 OCR 与图片理解配置");
 
 /**
  * 群组配置 Schema
@@ -185,6 +292,7 @@ export const GlobalConfigObjectSchema = z.object({
                 .positive()
                 .int()
                 .describe("最大并发请求数，用于文本生成器池，太小了会导致吞吐量下降，太大了可能会被服务商限流"),
+            imageUnderstanding: ImageUnderstandingConfigSchema,
             context: z
                 .object({
                     backgroundKnowledge: z

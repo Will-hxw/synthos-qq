@@ -40,4 +40,12 @@ export const SECTION_ICON_MAP: Record<string, string> = {
 export const DEFAULT_SECTION_ICON = "⚙️";
 
 /** 敏感字段路径列表 */
-export const SENSITIVE_FIELDS = ["dataProviders.QQ.dbKey", "ai.models.*.apiKey", "ai.defaultModelConfig.apiKey", "webUI_Forwarder.authTokenForFE", "webUI_Forwarder.authTokenForBE"];
+export const SENSITIVE_FIELDS = [
+    "dataProviders.QQ.dbKey",
+    "ai.models.*.apiKey",
+    "ai.defaultModelConfig.apiKey",
+    "ai.imageUnderstanding.ocr.apiKey",
+    "ai.imageUnderstanding.vision.apiKey",
+    "webUI_Forwarder.authTokenForFE",
+    "webUI_Forwarder.authTokenForBE"
+];

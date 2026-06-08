@@ -10,7 +10,8 @@ describe("ImDbAccessService", () => {
     const mockCommonDBService = {
         init: vi.fn(),
         get: vi.fn(),
-        all: vi.fn()
+        all: vi.fn(),
+        run: vi.fn()
     };
 
     beforeEach(() => {
@@ -18,6 +19,7 @@ describe("ImDbAccessService", () => {
         vi.clearAllMocks();
         mockCommonDBService.init.mockResolvedValue(undefined);
         mockCommonDBService.all.mockResolvedValue([]);
+        mockCommonDBService.run.mockResolvedValue(undefined);
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
     });
 
@@ -32,6 +34,171 @@ describe("ImDbAccessService", () => {
         );
         expect(mockCommonDBService.get).toHaveBeenCalledWith("SELECT * FROM chat_messages WHERE msgId =?", [
             "missing-msg"
+        ]);
+    });
+
+    it("批量写入原始消息时应同时写入图片媒体元信息", async () => {
+        const service = new ImDbAccessService();
+
+        await service.init();
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[图片，含图片链接]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "image",
+                        sourceProvider: "QQ",
+                        sourceUrl: "https://example.com/image.jpg",
+                        width: 100,
+                        height: 80,
+                        picType: 1000,
+                        originImageMd5: "abc",
+                        qqImageText: "图片文字"
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+
+        expect(mockCommonDBService.run).toHaveBeenCalledWith("BEGIN IMMEDIATE TRANSACTION");
+        expect(mockCommonDBService.run).toHaveBeenCalledWith("COMMIT");
+        expect(mediaInsertCall).toBeDefined();
+        expect(mediaInsertCall![1]).toEqual([
+            "msg-1:0",
+            "msg-1",
+            "group-a",
+            1000,
+            0,
+            "image",
+            "QQ",
+            "https://example.com/image.jpg",
+            100,
+            80,
+            1000,
+            "abc",
+            "图片文字",
+            "pending",
+            0,
+            expect.any(Number),
+            expect.any(Number)
+        ]);
+    });
+
+    it("无 URL 图片媒体入库时应标记为 skipped", async () => {
+        const service = new ImDbAccessService();
+
+        await service.init();
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[图片，暂无文字描述]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "image",
+                        sourceProvider: "QQ"
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+
+        expect(mediaInsertCall![1][13]).toBe("skipped");
+    });
+
+    it("应按群组、时间范围和 pending 状态查询待处理图片", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            {
+                mediaId: "msg-1:0",
+                msgId: "msg-1",
+                groupId: "group-a",
+                timestamp: 1000,
+                elementIndex: 0,
+                mediaType: "image",
+                sourceProvider: "QQ",
+                sourceUrl: "https://example.com/image.jpg",
+                status: "pending",
+                retryCount: 0,
+                createdAt: 1000,
+                updatedAt: 1000,
+                messageContent: "[图片，含图片链接]"
+            }
+        ]);
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getPendingImageMediaByGroupIdsAndTimeRange(
+            ["group-a", "group-b", "group-a"],
+            100,
+            200,
+            10
+        );
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM chat_message_media m");
+        expect(sql).toContain("m.groupId IN (?, ?)");
+        expect(sql).toContain("m.timestamp BETWEEN ? AND ?");
+        expect(sql).toContain("m.createdAt >= ?");
+        expect(sql).toContain("m.status = 'pending'");
+        expect(params).toEqual(["group-a", "group-b", 100, 200, 100, 10]);
+        expect(result[0].mediaId).toBe("msg-1:0");
+    });
+
+    it("更新图片理解结果时应写入结果字段并按需递增 retryCount", async () => {
+        const service = new ImDbAccessService();
+
+        await service.init();
+        await service.updateChatMessageMediaUnderstanding("msg-1:0", {
+            status: "pending",
+            failReason: "临时失败",
+            incrementRetryCount: true
+        });
+
+        const sql = mockCommonDBService.run.mock.calls[0][0] as string;
+        const params = mockCommonDBService.run.mock.calls[0][1];
+
+        expect(sql).toContain("UPDATE chat_message_media");
+        expect(sql).toContain("retryCount = retryCount + ?");
+        expect(params).toEqual([
+            "pending",
+            null,
+            null,
+            null,
+            null,
+            "临时失败",
+            null,
+            null,
+            1,
+            expect.any(Number),
+            "msg-1:0"
         ]);
     });
 

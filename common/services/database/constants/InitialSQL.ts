@@ -14,7 +14,36 @@ export const createIMDBTableSQL = `
                 );
                 CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp_sessionId ON chat_messages(timestamp, sessionId);
                 CREATE INDEX IF NOT EXISTS idx_chat_messages_groupId_timestamp_sessionId ON chat_messages(groupId, timestamp, sessionId);
-                CREATE INDEX IF NOT EXISTS idx_chat_messages_sessionId_timestamp ON chat_messages(sessionId, timestamp);`;
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_sessionId_timestamp ON chat_messages(sessionId, timestamp);
+                CREATE TABLE IF NOT EXISTS chat_message_media (
+                    mediaId TEXT NOT NULL PRIMARY KEY,
+                    msgId TEXT NOT NULL,
+                    groupId TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    elementIndex INTEGER NOT NULL,
+                    mediaType TEXT NOT NULL,
+                    sourceProvider TEXT NOT NULL,
+                    sourceUrl TEXT,
+                    width INTEGER,
+                    height INTEGER,
+                    picType INTEGER,
+                    originImageMd5 TEXT,
+                    qqImageText TEXT,
+                    ocrText TEXT,
+                    visionDescription TEXT,
+                    imageCategory TEXT,
+                    understandingText TEXT,
+                    status TEXT NOT NULL,
+                    retryCount INTEGER NOT NULL DEFAULT 0,
+                    failReason TEXT,
+                    ocrEngine INTEGER,
+                    modelName TEXT,
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_message_media_msgId_elementIndex ON chat_message_media(msgId, elementIndex);
+                CREATE INDEX IF NOT EXISTS idx_chat_message_media_groupId_timestamp_status ON chat_message_media(groupId, timestamp, status);
+                CREATE INDEX IF NOT EXISTS idx_chat_message_media_status_createdAt ON chat_message_media(status, createdAt);`;
 
 export const createAGCTableSQL = `
                 CREATE TABLE IF NOT EXISTS ai_digest_results (

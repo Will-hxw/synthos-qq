@@ -13,7 +13,26 @@ const mocks = vi.hoisted(() => {
     return {
         mockPipelineJob,
         mockAgendaEvery: vi.fn(async () => mockPipelineJob),
-        mockAgendaNow: vi.fn()
+        mockAgendaNow: vi.fn(),
+        mockAgendaCreate: vi.fn(() => ({ unique: vi.fn(() => ({ save: vi.fn().mockResolvedValue(undefined) })) })),
+        mockAgendaDefine: vi.fn(),
+        mockAgendaJobs: vi.fn().mockResolvedValue([{ name: "registered" }]),
+        mockAgendaStart: vi.fn(),
+        mockCleanupStaleJobs: vi.fn().mockResolvedValue(undefined),
+        mockScheduleAndWaitForJob: vi.fn().mockResolvedValue(true),
+        mockRegisterConfigManagerService: vi.fn(),
+        mockGetCurrentConfig: vi.fn().mockResolvedValue({
+            orchestrator: {
+                pipelineIntervalInMinutes: 30,
+                dataSeekTimeWindowInHours: 1
+            },
+            groupConfigs: {
+                "group-a": {}
+            }
+        }),
+        mockBootstrap: vi.fn((target: unknown) => target),
+        mockBootstrapAll: vi.fn(),
+        mockSetupReportScheduler: vi.fn().mockResolvedValue(undefined)
     };
 });
 
@@ -33,30 +52,34 @@ vi.mock("@root/common/scheduler/agenda", () => ({
     agendaInstance: {
         every: mocks.mockAgendaEvery,
         now: mocks.mockAgendaNow,
-        create: vi.fn(),
-        define: vi.fn(),
-        jobs: vi.fn(),
+        create: mocks.mockAgendaCreate,
+        define: mocks.mockAgendaDefine,
+        jobs: mocks.mockAgendaJobs,
         ready: Promise.resolve(),
-        start: vi.fn()
+        start: mocks.mockAgendaStart
     }
 }));
 
 vi.mock("@root/common/scheduler/jobUtils", () => ({
-    cleanupStaleJobs: vi.fn(),
-    scheduleAndWaitForJob: vi.fn()
+    cleanupStaleJobs: mocks.mockCleanupStaleJobs,
+    scheduleAndWaitForJob: mocks.mockScheduleAndWaitForJob
 }));
 
 vi.mock("@root/common/di/container", () => ({
-    registerConfigManagerService: vi.fn()
+    registerConfigManagerService: mocks.mockRegisterConfigManagerService
 }));
 
 vi.mock("@root/common/services/config/ConfigManagerService", () => ({
-    default: { getCurrentConfig: vi.fn() }
+    default: { getCurrentConfig: mocks.mockGetCurrentConfig }
 }));
 
 vi.mock("@root/common/util/lifecycle/bootstrap", () => ({
-    bootstrap: vi.fn(() => undefined),
-    bootstrapAll: vi.fn()
+    bootstrap: mocks.mockBootstrap,
+    bootstrapAll: mocks.mockBootstrapAll
+}));
+
+vi.mock("../src/schedulers/reportScheduler", () => ({
+    setupReportScheduler: mocks.mockSetupReportScheduler
 }));
 
 import { TaskHandlerTypes } from "@root/common/scheduler/@types/Tasks";
@@ -73,5 +96,41 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
         expect(mocks.mockPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
         expect(mocks.mockPipelineJob.save).toHaveBeenCalledTimes(1);
         expect(mocks.mockAgendaNow).not.toHaveBeenCalled();
+    });
+
+    it("RunPipeline 应按 ProvideData、ImageUnderstanding、Preprocess、AISummarize 顺序调度", async () => {
+        const ApplicationClass = mocks.mockBootstrap.mock.calls[0][0] as new () => { main: () => Promise<void> };
+        const app = new ApplicationClass();
+
+        await app.main();
+
+        const runPipelineHandler = mocks.mockAgendaDefine.mock.calls.find(
+            call => call[0] === TaskHandlerTypes.RunPipeline
+        )?.[1] as (job: any) => Promise<void>;
+
+        await runPipelineHandler({
+            attrs: {
+                name: TaskHandlerTypes.RunPipeline,
+                data: {}
+            },
+            touch: vi.fn().mockResolvedValue(undefined),
+            fail: vi.fn()
+        });
+
+        const scheduledTaskNames = mocks.mockScheduleAndWaitForJob.mock.calls.map(call => call[0]);
+
+        expect(scheduledTaskNames).toEqual([
+            TaskHandlerTypes.ProvideData,
+            TaskHandlerTypes.ImageUnderstanding,
+            TaskHandlerTypes.Preprocess,
+            TaskHandlerTypes.AISummarize,
+            TaskHandlerTypes.GenerateEmbedding,
+            TaskHandlerTypes.InterestScore,
+            TaskHandlerTypes.LLMInterestEvaluationAndNotification
+        ]);
+        expect(mocks.mockCleanupStaleJobs).toHaveBeenCalledWith(
+            expect.arrayContaining([TaskHandlerTypes.ImageUnderstanding])
+        );
+        expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.ImageUnderstanding });
     });
 });

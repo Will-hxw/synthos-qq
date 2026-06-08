@@ -3,6 +3,7 @@ import { ReportType } from "../../contracts/report";
 
 export enum TaskHandlerTypes {
     ProvideData = "ProvideData",
+    ImageUnderstanding = "ImageUnderstanding",
     Preprocess = "Preprocess",
     AISummarize = "AISummarize",
     InterestScore = "InterestScore",
@@ -17,6 +18,12 @@ export enum TaskHandlerTypes {
 export interface TaskParamsMap {
     [TaskHandlerTypes.ProvideData]: {
         IMType: IMTypes;
+        groupIds: string[];
+        startTimeStamp: number;
+        endTimeStamp: number;
+    };
+
+    [TaskHandlerTypes.ImageUnderstanding]: {
         groupIds: string[];
         startTimeStamp: number;
         endTimeStamp: number;

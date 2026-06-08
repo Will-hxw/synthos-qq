@@ -2,8 +2,10 @@ import "reflect-metadata";
 import { injectable, container } from "tsyringe";
 
 import {
+    ChatMessageMedia,
     ProcessedChatMessage,
     RawChatMessage,
+    RawChatMessageMedia,
     ProcessedChatMessageWithRawMessage
 } from "../../contracts/data-provider/index";
 import Logger from "../../util/Logger";
@@ -75,6 +77,22 @@ export interface DigestCoverageSnapshot {
     unassignedMessageSamples: DigestCoverageUnassignedMessageSample[];
 }
 
+export interface PendingChatMessageMedia extends ChatMessageMedia {
+    messageContent: string | null;
+}
+
+export interface ChatMessageMediaUpdate {
+    status: ChatMessageMedia["status"];
+    ocrText?: string | null;
+    visionDescription?: string | null;
+    imageCategory?: string | null;
+    understandingText?: string | null;
+    failReason?: string | null;
+    ocrEngine?: number | null;
+    modelName?: string | null;
+    incrementRetryCount?: boolean;
+}
+
 /**
  * IM 消息数据库访问服务
  * 负责聊天消息的存储和查询
@@ -95,23 +113,31 @@ export class ImDbAccessService extends Disposable {
     }
 
     public async storeRawChatMessage(msg: RawChatMessage) {
-        await this.db.run(
-            `INSERT INTO chat_messages (
-                msgId, messageContent, groupId, timestamp, senderId, senderGroupNickname, senderNickname, quotedMsgId, quotedMsgContent
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(msgId) DO NOTHING`,
-            [
-                msg.msgId,
-                msg.messageContent,
-                msg.groupId,
-                msg.timestamp,
-                msg.senderId,
-                msg.senderGroupNickname,
-                msg.senderNickname,
-                msg.quotedMsgId,
-                msg.quotedMsgContent
-            ]
-        );
+        await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            await this.db.run(
+                `INSERT INTO chat_messages (
+                    msgId, messageContent, groupId, timestamp, senderId, senderGroupNickname, senderNickname, quotedMsgId, quotedMsgContent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(msgId) DO NOTHING`,
+                [
+                    msg.msgId,
+                    msg.messageContent,
+                    msg.groupId,
+                    msg.timestamp,
+                    msg.senderId,
+                    msg.senderGroupNickname,
+                    msg.senderNickname,
+                    msg.quotedMsgId,
+                    msg.quotedMsgContent
+                ]
+            );
+            await this._storeRawChatMediaItems(msg.mediaItems || []);
+            await this.db.run("COMMIT");
+        } catch (err) {
+            await this.db.run("ROLLBACK");
+            throw err;
+        }
     }
 
     public async storeRawChatMessages(messages: RawChatMessage[]) {
@@ -167,6 +193,7 @@ export class ImDbAccessService extends Disposable {
 
                 // 执行批量插入
                 await this.db.run(sql, params);
+                await this._storeRawChatMediaItems(batch.flatMap(msg => msg.mediaItems || []));
             }
 
             // 提交事务
@@ -177,6 +204,164 @@ export class ImDbAccessService extends Disposable {
             this.LOGGER.error(`Failed to store messages batch: ${err.message}`);
             throw new Error(`Failed to store messages batch: ${err.message}`);
         }
+    }
+
+    /**
+     * 批量写入聊天消息中的媒体元信息。
+     * @param mediaItems 待写入的媒体元信息列表
+     */
+    private async _storeRawChatMediaItems(mediaItems: RawChatMessageMedia[]): Promise<void> {
+        if (mediaItems.length === 0) {
+            return;
+        }
+
+        const now = Date.now();
+
+        for (const media of mediaItems) {
+            const hasSourceUrl = typeof media.sourceUrl === "string" && media.sourceUrl.trim().length > 0;
+
+            await this.db.run(
+                `INSERT INTO chat_message_media (
+                    mediaId, msgId, groupId, timestamp, elementIndex, mediaType, sourceProvider,
+                    sourceUrl, width, height, picType, originImageMd5, qqImageText,
+                    status, retryCount, createdAt, updatedAt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mediaId) DO NOTHING`,
+                [
+                    media.mediaId,
+                    media.msgId,
+                    media.groupId,
+                    media.timestamp,
+                    media.elementIndex,
+                    media.mediaType,
+                    media.sourceProvider,
+                    media.sourceUrl || null,
+                    media.width ?? null,
+                    media.height ?? null,
+                    media.picType ?? null,
+                    media.originImageMd5 || null,
+                    media.qqImageText || null,
+                    hasSourceUrl ? "pending" : "skipped",
+                    0,
+                    now,
+                    now
+                ]
+            );
+        }
+    }
+
+    /**
+     * 获取当前时间范围内待图片理解处理的媒体记录。
+     * @param groupIds 群组ID列表
+     * @param timeStart 起始时间戳
+     * @param timeEnd 结束时间戳
+     * @param limit 数量上限
+     * @returns 待处理媒体记录
+     */
+    public async getPendingImageMediaByGroupIdsAndTimeRange(
+        groupIds: string[],
+        timeStart: number,
+        timeEnd: number,
+        limit: number
+    ): Promise<PendingChatMessageMedia[]> {
+        const uniqueGroupIds = [...new Set(groupIds)];
+
+        if (uniqueGroupIds.length === 0) {
+            return [];
+        }
+
+        const resolvedLimit = Math.max(1, Math.floor(limit));
+        const placeholders = uniqueGroupIds.map(() => "?").join(", ");
+
+        return await this.db.all<PendingChatMessageMedia>(
+            `SELECT m.*, c.messageContent AS messageContent
+             FROM chat_message_media m
+             INNER JOIN chat_messages c ON c.msgId = m.msgId
+             WHERE m.groupId IN (${placeholders})
+               AND m.timestamp BETWEEN ? AND ?
+               AND m.createdAt >= ?
+               AND m.mediaType = 'image'
+               AND m.status = 'pending'
+             ORDER BY m.timestamp ASC, m.msgId ASC, m.elementIndex ASC
+             LIMIT ?`,
+            [...uniqueGroupIds, timeStart, timeEnd, timeStart, resolvedLimit]
+        );
+    }
+
+    /**
+     * 按 msgId 批量读取媒体记录。
+     * @param msgIds 消息ID列表
+     * @returns 按 msgId 分组的媒体记录
+     */
+    public async getChatMessageMediaByMsgIds(msgIds: string[]): Promise<Map<string, ChatMessageMedia[]>> {
+        const mediaMap = new Map<string, ChatMessageMedia[]>();
+
+        if (msgIds.length === 0) {
+            return mediaMap;
+        }
+
+        const uniqueMsgIds = [...new Set(msgIds)];
+        const MAX_SQLITE_PARAMS = 999;
+
+        for (let i = 0; i < uniqueMsgIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = uniqueMsgIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+            const rows = await this.db.all<ChatMessageMedia>(
+                `SELECT *
+                 FROM chat_message_media
+                 WHERE msgId IN (${placeholders})
+                 ORDER BY timestamp ASC, msgId ASC, elementIndex ASC`,
+                batch
+            );
+
+            for (const row of rows) {
+                if (!mediaMap.has(row.msgId)) {
+                    mediaMap.set(row.msgId, []);
+                }
+
+                mediaMap.get(row.msgId)!.push(row);
+            }
+        }
+
+        return mediaMap;
+    }
+
+    /**
+     * 更新图片理解处理结果。
+     * @param mediaId 媒体ID
+     * @param update 更新内容
+     */
+    public async updateChatMessageMediaUnderstanding(
+        mediaId: string,
+        update: ChatMessageMediaUpdate
+    ): Promise<void> {
+        await this.db.run(
+            `UPDATE chat_message_media
+             SET status = ?,
+                 ocrText = ?,
+                 visionDescription = ?,
+                 imageCategory = ?,
+                 understandingText = ?,
+                 failReason = ?,
+                 ocrEngine = ?,
+                 modelName = ?,
+                 retryCount = retryCount + ?,
+                 updatedAt = ?
+             WHERE mediaId = ?`,
+            [
+                update.status,
+                update.ocrText ?? null,
+                update.visionDescription ?? null,
+                update.imageCategory ?? null,
+                update.understandingText ?? null,
+                update.failReason ?? null,
+                update.ocrEngine ?? null,
+                update.modelName ?? null,
+                update.incrementRetryCount ? 1 : 0,
+                Date.now(),
+                mediaId
+            ]
+        );
     }
 
     /**
@@ -724,6 +909,12 @@ export class ImDbAccessService extends Disposable {
         this.LOGGER.info(`去重后消息数量: ${dedupedArr.length}`);
 
         return dedupedArr;
+    }
+
+    public async selectAllChatMessageMedia(): Promise<ChatMessageMedia[]> {
+        return await this.db.all<ChatMessageMedia>(
+            `SELECT * FROM chat_message_media ORDER BY timestamp ASC, msgId ASC, elementIndex ASC`
+        );
     }
 
     public execQuerySQL(sql: string, params: any[] = []): Promise<any[]> {

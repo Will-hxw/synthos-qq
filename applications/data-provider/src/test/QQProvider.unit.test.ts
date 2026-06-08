@@ -368,6 +368,56 @@ describe("QQProvider", () => {
             expect(result[0].messageContent).toBe("[图片文字：图片里的文字]");
         });
 
+        it("图片消息应返回可持久化的媒体元信息", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.TEXT,
+                        messageText: "请看图",
+                        imageText: ""
+                    },
+                    {
+                        messageId: "elem_2",
+                        elementType: MsgElementType.IMAGE,
+                        imageUrlOrigin: "https://example.com/origin.jpg",
+                        imageUrlHigh: "https://example.com/high.jpg",
+                        imageUrlLow: "https://example.com/low.jpg",
+                        picWidth: 640,
+                        picHeight: 480,
+                        picType: 1000,
+                        originImageMd5: "abcdef1234567890",
+                        imageText: "图片里的通知"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("请看图[图片文字：图片里的通知]");
+            expect(result[0].mediaItems).toEqual([
+                {
+                    mediaId: `${mockMsgId}:1`,
+                    msgId: mockMsgId,
+                    groupId: mockGroupId,
+                    timestamp: Math.floor(mockTimestamp / 1000) * 1000,
+                    elementIndex: 1,
+                    mediaType: "image",
+                    sourceProvider: "QQ",
+                    sourceUrl: "https://example.com/origin.jpg",
+                    width: 640,
+                    height: 480,
+                    picType: 1000,
+                    originImageMd5: "abcdef1234567890",
+                    qqImageText: "图片里的通知"
+                }
+            ]);
+        });
+
         it("应正确处理语音消息", async () => {
             const mockRow = createMockDbRow();
 

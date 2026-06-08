@@ -37,6 +37,8 @@ export const AI_MODEL_TOKENS = {
     // 任务处理器
     /** AI 摘要任务处理器 */
     AISummarizeTaskHandler: Symbol.for("AISummarizeTaskHandler"),
+    /** 图片理解任务处理器 */
+    ImageUnderstandingTaskHandler: Symbol.for("ImageUnderstandingTaskHandler"),
     /** 兴趣度评分任务处理器 */
     InterestScoreTaskHandler: Symbol.for("InterestScoreTaskHandler"),
     /** LLM兴趣评估与通知任务处理器 */

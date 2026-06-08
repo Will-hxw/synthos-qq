@@ -4,7 +4,7 @@ import type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQS
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX } from "@root/common/services/config/schemas/GlobalConfig";
-import { RawChatMessage } from "@root/common/contracts/data-provider/index";
+import { RawChatMessage, RawChatMessageMedia } from "@root/common/contracts/data-provider/index";
 import Logger from "@root/common/util/Logger";
 import { PromisifiedSQLite } from "@root/common/util/promisify/PromisifiedSQLite";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
@@ -41,6 +41,17 @@ interface QQMessageParseStats {
     skippedInvalidQuotedProtobufCount: number;
     parseFailurePlaceholderCount: number;
     emptyContentPlaceholderCount: number;
+}
+
+interface ParsedMessageContent {
+    content: string;
+    mediaItems: RawChatMessageMedia[];
+}
+
+interface MediaOwnerInfo {
+    msgId: string;
+    groupId: string;
+    timestamp: number;
 }
 
 /**
@@ -273,9 +284,17 @@ export class QQProvider extends Disposable implements IIMProvider {
     }
 
     private async _parseMessageContent(rawMsgElements: MsgElement[]): Promise<string> {
-        let result = "";
+        return (await this._parseMessageContentWithMedia(rawMsgElements)).content;
+    }
 
-        for (const rawMsgElement of rawMsgElements) {
+    private async _parseMessageContentWithMedia(
+        rawMsgElements: MsgElement[],
+        mediaOwner?: MediaOwnerInfo
+    ): Promise<ParsedMessageContent> {
+        let result = "";
+        const mediaItems: RawChatMessageMedia[] = [];
+
+        for (const [elementIndex, rawMsgElement] of rawMsgElements.entries()) {
             switch (rawMsgElement.elementType) {
                 case MsgElementType.TEXT: {
                     result += rawMsgElement.messageText;
@@ -294,6 +313,10 @@ export class QQProvider extends Disposable implements IIMProvider {
                     break;
                 }
                 case MsgElementType.IMAGE: {
+                    if (mediaOwner) {
+                        mediaItems.push(this._buildImageMediaItem(rawMsgElement, mediaOwner, elementIndex));
+                    }
+
                     if (rawMsgElement.imageText) {
                         result += `[图片文字：${this._normalizeInlineText(rawMsgElement.imageText)}]`;
                     } else {
@@ -354,7 +377,38 @@ export class QQProvider extends Disposable implements IIMProvider {
             }
         }
 
-        return result;
+        return {
+            content: result,
+            mediaItems
+        };
+    }
+
+    private _buildImageMediaItem(
+        element: MsgElement,
+        mediaOwner: MediaOwnerInfo,
+        elementIndex: number
+    ): RawChatMessageMedia {
+        const sourceUrl = this._normalizeInlineText(
+            element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow
+        );
+        const originImageMd5 = this._normalizeInlineText(element.originImageMd5);
+        const qqImageText = this._normalizeInlineText(element.imageText);
+
+        return {
+            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            msgId: mediaOwner.msgId,
+            groupId: mediaOwner.groupId,
+            timestamp: mediaOwner.timestamp,
+            elementIndex,
+            mediaType: "image",
+            sourceProvider: "QQ",
+            sourceUrl: sourceUrl || undefined,
+            width: element.picWidth > 0 ? element.picWidth : undefined,
+            height: element.picHeight > 0 ? element.picHeight : undefined,
+            picType: element.picType > 0 ? element.picType : undefined,
+            originImageMd5: originImageMd5 || undefined,
+            qqImageText: qqImageText || undefined
+        };
     }
 
     private _formatImageMessage(element: MsgElement): string {
@@ -705,8 +759,14 @@ export class QQProvider extends Disposable implements IIMProvider {
 
         try {
             const msgSegment = this.messagePBParser.parseMessageSegment(result[GMC.msgContent]);
+            const parsedContent = await this._parseMessageContentWithMedia(msgSegment?.messages || [], {
+                msgId: processedMsg.msgId,
+                groupId: processedMsg.groupId,
+                timestamp: processedMsg.timestamp
+            });
 
-            processedMsg.messageContent = await this._parseMessageContent(msgSegment?.messages || []);
+            processedMsg.messageContent = parsedContent.content;
+            processedMsg.mediaItems = parsedContent.mediaItems;
         } catch (error) {
             if (error === ErrorReasons.PROTOBUF_ERROR) {
                 stats.parseFailurePlaceholderCount++;

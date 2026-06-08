@@ -25,6 +25,7 @@ import { TextGeneratorService } from "../services/generators/text/TextGeneratorS
 import { RAGCtxBuilder } from "../context/ctxBuilders/RAGCtxBuilder";
 import { RagRPCImpl } from "../rag/RagRPCImpl";
 import { AISummarizeTaskHandler } from "../tasks/AISummarize";
+import { ImageUnderstandingTaskHandler } from "../tasks/ImageUnderstanding";
 import { InterestScoreTaskHandler } from "../tasks/InterestScore";
 import { LLMInterestEvaluationAndNotificationTaskHandler } from "../tasks/LLMInterestEvaluationAndNotification";
 import { GenerateEmbeddingTaskHandler } from "../tasks/GenerateEmbedding";
@@ -111,6 +112,7 @@ export async function registerAllDependencies(): Promise<void> {
 
     // 7. 注册任务处理器
     container.registerSingleton(AI_MODEL_TOKENS.AISummarizeTaskHandler, AISummarizeTaskHandler);
+    container.registerSingleton(AI_MODEL_TOKENS.ImageUnderstandingTaskHandler, ImageUnderstandingTaskHandler);
     container.registerSingleton(AI_MODEL_TOKENS.InterestScoreTaskHandler, InterestScoreTaskHandler);
     container.registerSingleton(
         AI_MODEL_TOKENS.LLMInterestEvaluationAndNotificationTaskHandler,

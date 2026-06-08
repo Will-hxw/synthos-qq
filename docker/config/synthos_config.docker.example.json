@@ -53,6 +53,32 @@
         },
         "defaultModelNames": ["example-model"],
         "maxConcurrentRequests": 10,
+        "imageUnderstanding": {
+            "enabled": false,
+            "ocr": {
+                "provider": "ocrspace",
+                "apiKey": "replace-with-ocrspace-api-key",
+                "endpoint": "https://api.ocr.space/parse/image",
+                "language": "chs",
+                "ocrEngine": 2,
+                "scale": true,
+                "detectOrientation": true,
+                "isOverlayRequired": false,
+                "maxImageBytes": 1048576
+            },
+            "vision": {
+                "provider": "dashscope-openai-compatible",
+                "apiKey": "replace-with-dashscope-api-key",
+                "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "modelName": "qwen3.6-flash-2026-04-16",
+                "temperature": 0,
+                "maxTokens": 2048
+            },
+            "maxImagesPerRun": 50,
+            "retryCount": 2,
+            "requestTimeoutMs": 30000,
+            "processOnlyNewMessages": true
+        },
         "context": {
             "backgroundKnowledge": {
                 "enabled": false,

@@ -199,7 +199,46 @@ cp synthos_config.example.json synthos_config.json
 
 > 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。`reasoning.enabled` 默认关闭；只有确认上游模型支持对应参数时才开启。
 
-### 6. 配置 QQ 数据源
+### 6. 配置图片理解（可选）
+
+图片理解默认关闭。启用后，系统会在 `ProvideData` 后异步处理新入库图片：先用 OCR.space 提取文字，再用 DashScope OpenAI-compatible 视觉模型生成中文理解文本，最终仍以纯文本进入摘要上下文。系统只保存 QQ 原始图片 URL 和元信息，不缓存原图、不保存 base64。
+
+```json
+{
+  "ai": {
+    "imageUnderstanding": {
+      "enabled": false,
+      "ocr": {
+        "provider": "ocrspace",
+        "apiKey": "replace-with-ocrspace-api-key",
+        "endpoint": "https://api.ocr.space/parse/image",
+        "language": "chs",
+        "ocrEngine": 2,
+        "scale": true,
+        "detectOrientation": true,
+        "isOverlayRequired": false,
+        "maxImageBytes": 1048576
+      },
+      "vision": {
+        "provider": "dashscope-openai-compatible",
+        "apiKey": "replace-with-dashscope-api-key",
+        "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "modelName": "qwen3.6-flash-2026-04-16",
+        "temperature": 0,
+        "maxTokens": 2048
+      },
+      "maxImagesPerRun": 50,
+      "retryCount": 2,
+      "requestTimeoutMs": 30000,
+      "processOnlyNewMessages": true
+    }
+  }
+}
+```
+
+请把真实 OCR.space 和 DashScope API Key 放在本地 `synthos_config.json` 或 ignored override 配置中，不要提交到仓库。`processOnlyNewMessages` 默认开启，v1 不做历史图片全量回填。
+
+### 7. 配置 QQ 数据源
 
 若需自动拉取 QQ 聊天记录，配置 `dataProviders.QQ`：
 
@@ -240,7 +279,7 @@ cp synthos_config.example.json synthos_config.json
 
 > ⚠️ `data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
 
-### 7. 配置群组
+### 8. 配置群组
 
 ```json
 {

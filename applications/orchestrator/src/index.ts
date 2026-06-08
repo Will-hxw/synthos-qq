@@ -15,11 +15,12 @@ import { setupReportScheduler } from "./schedulers/reportScheduler";
 /**
  * Pipeline 执行顺序（严格串行）:
  * 1. ProvideData - 获取原始数据
- * 2. Preprocess - 预处理数据
- * 3. AISummarize - AI 摘要生成
- * 4. GenerateEmbedding - 生成向量嵌入
- * 5. InterestScore - 计算兴趣度评分
- * 6. LLMInterestEvaluationAndNotification - LLM智能兴趣评估与邮件通知
+ * 2. ImageUnderstanding - 图片 OCR 与图片理解
+ * 3. Preprocess - 预处理数据
+ * 4. AISummarize - AI 摘要生成
+ * 5. GenerateEmbedding - 生成向量嵌入
+ * 6. InterestScore - 计算兴趣度评分
+ * 7. LLMInterestEvaluationAndNotification - LLM智能兴趣评估与邮件通知
  */
 
 // 注意：日报生成任务由 reportScheduler 负责，独立于主 Pipeline
@@ -27,6 +28,7 @@ import { setupReportScheduler } from "./schedulers/reportScheduler";
 const LOGGER = Logger.withTag("🎭 orchestrator-root-script");
 const PIPELINE_WORKER_TASKS = [
     TaskHandlerTypes.ProvideData,
+    TaskHandlerTypes.ImageUnderstanding,
     TaskHandlerTypes.Preprocess,
     TaskHandlerTypes.AISummarize,
     TaskHandlerTypes.GenerateEmbedding,
@@ -63,6 +65,7 @@ class OrchestratorApplication {
         await cleanupStaleJobs([
             TaskHandlerTypes.RunPipeline,
             TaskHandlerTypes.ProvideData,
+            TaskHandlerTypes.ImageUnderstanding,
             TaskHandlerTypes.Preprocess,
             TaskHandlerTypes.AISummarize,
             TaskHandlerTypes.GenerateEmbedding,
@@ -114,8 +117,29 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 2: Preprocess ====================
-                LOGGER.info("🔧 [2/6] 开始执行 Preprocess 任务...");
+                // ==================== 步骤 2: ImageUnderstanding ====================
+                LOGGER.info("🖼️ [2/7] 开始执行 ImageUnderstanding 任务...");
+                const imageUnderstandingSuccess = await scheduleAndWaitForJob(
+                    TaskHandlerTypes.ImageUnderstanding,
+                    {
+                        groupIds,
+                        startTimeStamp,
+                        endTimeStamp
+                    },
+                    POLL_INTERVAL,
+                    TASK_TIMEOUT
+                );
+
+                if (!imageUnderstandingSuccess) {
+                    LOGGER.error("❌ ImageUnderstanding 任务失败，Pipeline 终止");
+                    job.fail("ImageUnderstanding task failed");
+
+                    return;
+                }
+                await job.touch();
+
+                // ==================== 步骤 3: Preprocess ====================
+                LOGGER.info("🔧 [3/7] 开始执行 Preprocess 任务...");
                 const preprocessSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.Preprocess,
                     {
@@ -135,8 +159,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 3: AISummarize ====================
-                LOGGER.info("🤖 [3/6] 开始执行 AISummarize 任务...");
+                // ==================== 步骤 4: AISummarize ====================
+                LOGGER.info("🤖 [4/7] 开始执行 AISummarize 任务...");
                 const aiSummarizeSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.AISummarize,
                     {
@@ -156,8 +180,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 4: GenerateEmbedding ====================
-                LOGGER.info("📐 [4/6] 开始执行 GenerateEmbedding 任务...");
+                // ==================== 步骤 5: GenerateEmbedding ====================
+                LOGGER.info("📐 [5/7] 开始执行 GenerateEmbedding 任务...");
                 const generateEmbeddingSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.GenerateEmbedding,
                     {
@@ -176,8 +200,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 5: InterestScore ====================
-                LOGGER.info("⭐ [5/6] 开始执行 InterestScore 任务...");
+                // ==================== 步骤 6: InterestScore ====================
+                LOGGER.info("⭐ [6/7] 开始执行 InterestScore 任务...");
                 const interestScoreSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.InterestScore,
                     {
@@ -196,8 +220,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 6: LLMInterestEvaluationAndNotification ====================
-                LOGGER.info("🔔 [6/6] 开始执行 LLMInterestEvaluationAndNotification 任务...");
+                // ==================== 步骤 7: LLMInterestEvaluationAndNotification ====================
+                LOGGER.info("🔔 [7/7] 开始执行 LLMInterestEvaluationAndNotification 任务...");
                 const llmInterestEvaluationSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.LLMInterestEvaluationAndNotification,
                     {

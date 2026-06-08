@@ -130,23 +130,45 @@ export class PreprocessTaskHandler {
         startTimeStamp: number,
         endTimeStamp: number
     ): Promise<number> {
-        const results = await Promise.all(
-            (await splitter.assignSessionId(groupId, startTimeStamp, endTimeStamp)).map<
-                Promise<ProcessedChatMessage>
-            >(async result => {
-                return {
-                    sessionId: result.sessionId!,
-                    msgId: result.msgId,
-                    preProcessedContent: formatMsg(
-                        result,
-                        result.quotedMsgId
-                            ? await this.imDbAccessService.getRawChatMessageByMsgId(result.quotedMsgId)
-                            : undefined,
-                        result.quotedMsgContent
-                    )
-                };
+        const assignedMessages = await splitter.assignSessionId(groupId, startTimeStamp, endTimeStamp);
+        const quotedMessages = new Map<
+            string,
+            Awaited<ReturnType<ImDbAccessService["getRawChatMessageByMsgId"]>>
+        >();
+
+        await Promise.all(
+            assignedMessages.map(async message => {
+                if (!message.quotedMsgId || quotedMessages.has(message.quotedMsgId)) {
+                    return;
+                }
+
+                quotedMessages.set(
+                    message.quotedMsgId,
+                    await this.imDbAccessService.getRawChatMessageByMsgId(message.quotedMsgId)
+                );
             })
         );
+
+        const mediaMsgIds = [
+            ...assignedMessages.map(message => message.msgId),
+            ...Array.from(quotedMessages.values()).map(message => message.msgId)
+        ];
+        const mediaMap = await this.imDbAccessService.getChatMessageMediaByMsgIds(mediaMsgIds);
+        const results = assignedMessages.map<ProcessedChatMessage>(result => {
+            const quotedMsg = result.quotedMsgId ? quotedMessages.get(result.quotedMsgId) : undefined;
+
+            return {
+                sessionId: result.sessionId!,
+                msgId: result.msgId,
+                preProcessedContent: formatMsg(
+                    result,
+                    quotedMsg,
+                    result.quotedMsgContent,
+                    mediaMap.get(result.msgId) || [],
+                    quotedMsg ? mediaMap.get(quotedMsg.msgId) || [] : []
+                )
+            };
+        });
 
         await this.imDbAccessService.storeProcessedChatMessages(results);
 

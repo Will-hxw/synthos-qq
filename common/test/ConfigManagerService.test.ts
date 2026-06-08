@@ -56,6 +56,9 @@ vi.mock("@root/common/util/ASSERT", () => ({
 // 在 mock 之后导入类（不是单例实例）
 import { ConfigManagerService } from "../services/config/ConfigManagerService";
 import {
+    IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT,
+    IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT,
+    IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
     PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT,
     QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
 } from "../services/config/schemas/GlobalConfig";
@@ -119,6 +122,32 @@ const mockMainConfig = {
         },
         defaultModelNames: ["gpt-4"],
         maxConcurrentRequests: 5,
+        imageUnderstanding: {
+            enabled: false,
+            ocr: {
+                provider: "ocrspace" as const,
+                apiKey: "",
+                endpoint: "https://api.ocr.space/parse/image",
+                language: "chs",
+                ocrEngine: 2,
+                scale: true,
+                detectOrientation: true,
+                isOverlayRequired: false,
+                maxImageBytes: IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT
+            },
+            vision: {
+                provider: "dashscope-openai-compatible" as const,
+                apiKey: "",
+                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                modelName: "qwen3.6-flash-2026-04-16",
+                temperature: 0,
+                maxTokens: 2048
+            },
+            maxImagesPerRun: IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT,
+            retryCount: 2,
+            requestTimeoutMs: IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
+            processOnlyNewMessages: true
+        },
         context: {
             backgroundKnowledge: {
                 enabled: false,
@@ -413,6 +442,34 @@ describe("ConfigManagerService", () => {
             expect(config.preprocessors.historicalBackfill.messageLimit).toBe(
                 PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT
             );
+        });
+
+        it("历史配置缺少图片理解配置时应填充默认关闭配置", async () => {
+            const { imageUnderstanding, ...aiWithoutImageUnderstanding } = mockMainConfig.ai;
+            const legacyConfig = {
+                ...mockMainConfig,
+                ai: aiWithoutImageUnderstanding
+            };
+
+            void imageUnderstanding;
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.ai.imageUnderstanding.enabled).toBe(false);
+            expect(config.ai.imageUnderstanding.ocr.endpoint).toBe("https://api.ocr.space/parse/image");
+            expect(config.ai.imageUnderstanding.ocr.language).toBe("chs");
+            expect(config.ai.imageUnderstanding.ocr.ocrEngine).toBe(2);
+            expect(config.ai.imageUnderstanding.ocr.apiKey).toBe("");
+            expect(config.ai.imageUnderstanding.vision.baseURL).toBe(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            );
+            expect(config.ai.imageUnderstanding.vision.modelName).toBe("qwen3.6-flash-2026-04-16");
+            expect(config.ai.imageUnderstanding.vision.apiKey).toBe("");
+            expect(config.ai.imageUnderstanding.processOnlyNewMessages).toBe(true);
         });
 
         it("历史配置仅有 defaultModelName 时应迁移为默认模型列表", async () => {

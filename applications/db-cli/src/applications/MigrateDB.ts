@@ -1,6 +1,7 @@
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
 import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 import { InterestScoreDbAccessService } from "@root/common/services/database/InterestScoreDbAccessService";
+import { createIMDBTableSQL } from "@root/common/services/database/constants/InitialSQL";
 import { PromisifiedSQLite } from "@root/common/util/promisify/PromisifiedSQLite";
 import sqlite3 from "sqlite3";
 import Logger from "@root/common/util/Logger";
@@ -44,20 +45,6 @@ export class MigrateDB extends Disposable implements IApplication {
 
         // 创建表结构
         this.LOGGER.info("创建表结构...");
-        const createIMDBTableSQL = `
-                CREATE TABLE chat_messages (
-                    msgId TEXT NOT NULL PRIMARY KEY,
-                    messageContent TEXT,
-                    groupId TEXT,
-                    timestamp INTEGER,
-                    senderId TEXT,
-                    senderGroupNickname TEXT,
-                    senderNickname TEXT,
-                    quotedMsgId TEXT,
-                    quotedMsgContent TEXT,
-                    sessionId TEXT,
-                    preProcessedContent TEXT
-                );`;
         const createAGCTableSQL = `
                 CREATE TABLE IF NOT EXISTS ai_digest_results (
                     topicId TEXT NOT NULL PRIMARY KEY,
@@ -118,6 +105,54 @@ export class MigrateDB extends Disposable implements IApplication {
             throw error;
         }
         this.LOGGER.success("已迁移 IMDB 数据库所有数据");
+
+        const allMediaData = await this.imdbDBManager.selectAllChatMessageMedia();
+
+        this.LOGGER.info(`已获取 IMDB 媒体数据，共 ${allMediaData.length} 条记录`);
+        await newDB.run(`BEGIN IMMEDIATE TRANSACTION`);
+        try {
+            for (const data of allMediaData) {
+                await newDB.run(
+                    `INSERT INTO chat_message_media (
+                        mediaId, msgId, groupId, timestamp, elementIndex, mediaType, sourceProvider,
+                        sourceUrl, width, height, picType, originImageMd5, qqImageText,
+                        ocrText, visionDescription, imageCategory, understandingText,
+                        status, retryCount, failReason, ocrEngine, modelName, createdAt, updatedAt
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        data.mediaId,
+                        data.msgId,
+                        data.groupId,
+                        data.timestamp,
+                        data.elementIndex,
+                        data.mediaType,
+                        data.sourceProvider,
+                        data.sourceUrl,
+                        data.width,
+                        data.height,
+                        data.picType,
+                        data.originImageMd5,
+                        data.qqImageText,
+                        data.ocrText,
+                        data.visionDescription,
+                        data.imageCategory,
+                        data.understandingText,
+                        data.status,
+                        data.retryCount,
+                        data.failReason,
+                        data.ocrEngine,
+                        data.modelName,
+                        data.createdAt,
+                        data.updatedAt
+                    ]
+                );
+            }
+            await newDB.run(`COMMIT`);
+        } catch (error) {
+            await newDB.run(`ROLLBACK`);
+            throw error;
+        }
+        this.LOGGER.success("已迁移 IMDB 媒体数据");
 
         // 迁移 AGC 数据库
         this.LOGGER.info("开始迁移 AGC 数据库...");
