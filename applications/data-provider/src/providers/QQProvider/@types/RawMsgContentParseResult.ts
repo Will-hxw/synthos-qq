@@ -6,7 +6,9 @@
  */
 export interface RawMsgContentParseResult {
     messages: MsgElement[];
-    extraMessage: QuotedMsg;
+    /** 兼容旧字段名，运行时 proto 已改为 repeated extraMessages。 */
+    extraMessage?: StoredMsg;
+    extraMessages?: StoredMsg[];
 }
 
 /**
@@ -225,7 +227,7 @@ interface FeedMessage {
     text: string;
 }
 
-interface QuotedMsg {
+export interface StoredMsg {
     /** 消息ID (msgId = 40001) */
     msgId: string;
 
@@ -235,5 +237,44 @@ interface QuotedMsg {
     /** 群聊消息ID (msgSeq = 40003) */
     msgSeq: string;
 
+    /** 聊天类型 (chatType = 40010) */
+    chatType: number;
+
+    /** 消息类型 (msgType = 40011) */
+    msgType: number;
+
+    /** 子消息类型 (subMsgType = 40012) */
+    subMsgType: number;
+
+    /** 发送标志 (sendType = 40013) */
+    sendType: number;
+
+    /** 发送者 nt_uid (senderUid = 40020) */
+    senderUid: string;
+
+    /** 会话 nt_uid (peerUid = 40021) */
+    peerUid: string;
+
+    /** 会话 QQ 号 (peerUin = 40027) */
+    peerUin: string;
+
+    /** 群号 (groupUin = 40030) */
+    groupUin: string;
+
+    /** 发送者 QQ 号 (senderUin = 40033) */
+    senderUin: string;
+
+    /** 消息时间戳，单位秒 (msgTime = 40050) */
+    msgTime: number;
+
+    /** 发送者群名片 (sendMemberName = 40090) */
+    sendMemberName: string;
+
+    /** 发送者昵称 (sendNickName = 40093) */
+    sendNickName: string;
+
     messages: MsgElement[]; // 被引用的消息正文
+
+    /** 嵌套引用消息或合并转发缓存 (extraMessages = 40900) */
+    extraMessages?: StoredMsg[];
 }

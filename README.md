@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">🔬 Synthos</h1>
+  <h1 align="center">🔬 Synthos-QQ</h1>
   <p align="center"><strong>智能聊天记录全链路分析系统</strong></p>
   <p align="center">从原始 QQ 聊天记录导入 → 上下文理解 → AI 摘要 → 兴趣度排行 → 可视化日报，一站式全链路数据分析</p>
 </p>

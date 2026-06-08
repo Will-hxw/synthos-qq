@@ -23,7 +23,7 @@ import { RawGroupMsgFromDB } from "./@types/RawGroupMsgFromDB";
 import { MessagePBParser } from "./parsers/MessagePBParser";
 import { formatApplicationCardMessage } from "./formatters/ApplicationCardMessageFormatter";
 import { MsgElementType } from "./@types/mappers/MsgElementType";
-import { MsgElement } from "./@types/RawMsgContentParseResult";
+import { MsgElement, RawMsgContentParseResult, StoredMsg } from "./@types/RawMsgContentParseResult";
 import { MsgType } from "./@types/mappers/MsgType";
 import {
     buildQQEmptyContentPlaceholder,
@@ -37,6 +37,7 @@ export type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQS
 sqlite3.verbose();
 
 const QQ_SOURCE_MSG_ID_SQL_CHUNK_SIZE = 500;
+const QQ_FORWARD_MERGED_MAX_DEPTH = 3;
 
 interface QQMessageParseStats {
     skippedExcludedMsgTypeCount: number;
@@ -49,6 +50,11 @@ interface QQMessageParseStats {
 interface ParsedMessageContent {
     content: string;
     mediaItems: RawChatMessageMedia[];
+}
+
+interface ParsedStoredMessageContent {
+    content: string;
+    quotedMsgContent?: string;
 }
 
 interface MediaOwnerInfo {
@@ -340,6 +346,168 @@ export class QQProvider extends Disposable implements IIMProvider {
 
     private async _parseMessageContent(rawMsgElements: MsgElement[]): Promise<string> {
         return (await this._parseMessageContentWithMedia(rawMsgElements)).content;
+    }
+
+    private _getStoredMessages(msgSegment: RawMsgContentParseResult | null | undefined): StoredMsg[] {
+        if (!msgSegment) {
+            return [];
+        }
+
+        if (Array.isArray(msgSegment.extraMessages) && msgSegment.extraMessages.length > 0) {
+            return msgSegment.extraMessages;
+        }
+
+        return msgSegment.extraMessage ? [msgSegment.extraMessage] : [];
+    }
+
+    private async _parseQuotedMsgContentFromStoredMessages(storedMessages: StoredMsg[]): Promise<string> {
+        const quotedMsg = storedMessages[0];
+
+        if (!quotedMsg || !quotedMsg.messages || quotedMsg.messages.length === 0) {
+            throw ErrorReasons.EMPTY_VALUE_ERROR;
+        }
+
+        const quotedMsgContent = await this._parseMessageContent(quotedMsg.messages);
+
+        if (!quotedMsgContent) {
+            throw ErrorReasons.EMPTY_VALUE_ERROR;
+        }
+
+        return quotedMsgContent;
+    }
+
+    private async _parseForwardMergedContentFromExtraData(
+        extraData: Buffer | null | undefined,
+        parentMsg: RawChatMessage
+    ): Promise<string> {
+        if (!extraData || extraData.length === 0) {
+            return "";
+        }
+
+        try {
+            const msgSegment = this.messagePBParser.parseMessageSegment(extraData);
+
+            return await this._formatForwardMergedMessages(this._getStoredMessages(msgSegment), parentMsg, 0);
+        } catch (error) {
+            if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
+                return "";
+            }
+
+            throw error;
+        }
+    }
+
+    private async _formatForwardMergedMessages(
+        storedMessages: StoredMsg[],
+        parentMsg: RawChatMessage,
+        depth: number
+    ): Promise<string> {
+        if (storedMessages.length === 0) {
+            return "";
+        }
+
+        if (depth >= QQ_FORWARD_MERGED_MAX_DEPTH) {
+            return "[合并转发，嵌套过深未继续展开]";
+        }
+
+        const lines: string[] = [];
+
+        for (let i = 0; i < storedMessages.length; i++) {
+            const line = await this._formatForwardMergedMessageLine(storedMessages[i], parentMsg, depth, i);
+
+            if (line) {
+                lines.push(line);
+            }
+        }
+
+        if (lines.length === 0) {
+            return "";
+        }
+
+        return `[合并转发，共 ${storedMessages.length} 条]\n${lines.join("\n")}`;
+    }
+
+    private async _formatForwardMergedMessageLine(
+        storedMsg: StoredMsg,
+        parentMsg: RawChatMessage,
+        depth: number,
+        itemIndex: number
+    ): Promise<string> {
+        const parsed = await this._parseStoredMessageContent(storedMsg, parentMsg, depth, itemIndex);
+        const nickname = this._normalizeInlineText(storedMsg.sendMemberName || storedMsg.sendNickName);
+
+        if (parsed.quotedMsgContent) {
+            return `("${nickname}"):【这条消息引用了其他人的消息: ${parsed.quotedMsgContent}】${parsed.content}`;
+        }
+
+        return `("${nickname}"): ${parsed.content}`;
+    }
+
+    private async _parseStoredMessageContent(
+        storedMsg: StoredMsg,
+        parentMsg: RawChatMessage,
+        depth: number,
+        itemIndex: number
+    ): Promise<ParsedStoredMessageContent> {
+        const msgType = Number(storedMsg.msgType);
+        const quotedMsgContent =
+            msgType === MsgType.REPLY
+                ? await this._parseQuotedMsgContentFromStoredMessages(storedMsg.extraMessages || []).catch(
+                      error => {
+                          if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
+                              return undefined;
+                          }
+
+                          throw error;
+                      }
+                  )
+                : undefined;
+
+        if (msgType === MsgType.FORWARD_MERGED) {
+            const content = await this._formatForwardMergedMessages(
+                storedMsg.extraMessages || [],
+                parentMsg,
+                depth + 1
+            );
+
+            return {
+                content: content || buildQQEmptyContentPlaceholder(msgType),
+                quotedMsgContent
+            };
+        }
+
+        const parsedContent = await this._parseMessageContentWithMedia(storedMsg.messages || [], {
+            msgId: this._getStoredMessageId(storedMsg, parentMsg, itemIndex),
+            groupId: this._getStoredMessageGroupId(storedMsg, parentMsg),
+            timestamp: this._getStoredMessageTimestamp(storedMsg, parentMsg)
+        });
+
+        return {
+            content: parsedContent.content || buildQQEmptyContentPlaceholder(msgType),
+            quotedMsgContent
+        };
+    }
+
+    private _getStoredMessageId(storedMsg: StoredMsg, parentMsg: RawChatMessage, itemIndex: number): string {
+        const msgId = this._normalizeInlineText(storedMsg.msgId);
+
+        if (msgId && msgId !== "0") {
+            return msgId;
+        }
+
+        return `${parentMsg.msgId}:forward:${itemIndex}`;
+    }
+
+    private _getStoredMessageGroupId(storedMsg: StoredMsg, parentMsg: RawChatMessage): string {
+        const groupId = this._normalizeInlineText(storedMsg.groupUin || storedMsg.peerUin);
+
+        return groupId || parentMsg.groupId;
+    }
+
+    private _getStoredMessageTimestamp(storedMsg: StoredMsg, parentMsg: RawChatMessage): number {
+        const msgTime = Number(storedMsg.msgTime);
+
+        return Number.isFinite(msgTime) && msgTime > 0 ? msgTime * 1000 : parentMsg.timestamp;
     }
 
     private async _parseMessageContentWithMedia(
@@ -965,24 +1133,17 @@ export class QQProvider extends Disposable implements IIMProvider {
             );
 
             try {
-                const extraMessage = this.messagePBParser.parseMessageSegment(result[GMC.extraData]).extraMessage;
+                const msgSegment = this.messagePBParser.parseMessageSegment(result[GMC.extraData]);
 
-                if (!extraMessage || !extraMessage.messages) {
-                    stats.skippedEmptyQuotedContentCount++;
-                    throw ErrorReasons.EMPTY_VALUE_ERROR;
-                }
-
-                const quotedMsgContent = await this._parseMessageContent(extraMessage.messages);
-
-                if (!quotedMsgContent) {
-                    stats.skippedEmptyQuotedContentCount++;
-                    throw ErrorReasons.EMPTY_VALUE_ERROR;
-                }
-                processedMsg.quotedMsgContent = quotedMsgContent;
+                processedMsg.quotedMsgContent = await this._parseQuotedMsgContentFromStoredMessages(
+                    this._getStoredMessages(msgSegment)
+                );
             } catch (error) {
                 if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
                     if (error === ErrorReasons.PROTOBUF_ERROR) {
                         stats.skippedInvalidQuotedProtobufCount++;
+                    } else {
+                        stats.skippedEmptyQuotedContentCount++;
                     }
                 } else {
                     throw error;
@@ -991,6 +1152,20 @@ export class QQProvider extends Disposable implements IIMProvider {
         }
 
         try {
+            if (msgType === MsgType.FORWARD_MERGED) {
+                const forwardMergedContent = await this._parseForwardMergedContentFromExtraData(
+                    result[GMC.extraData],
+                    processedMsg
+                );
+
+                if (forwardMergedContent) {
+                    processedMsg.messageContent = forwardMergedContent;
+                    processedMsg.mediaItems = [];
+
+                    return processedMsg;
+                }
+            }
+
             const msgSegment = this.messagePBParser.parseMessageSegment(result[GMC.msgContent]);
             const parsedContent = await this._parseMessageContentWithMedia(msgSegment?.messages || [], {
                 msgId: processedMsg.msgId,
