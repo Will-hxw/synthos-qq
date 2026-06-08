@@ -839,6 +839,239 @@ describe("QQProvider", () => {
             expect(result[0].messageContent).toBe("[卡片消息，分享标题]");
         });
 
+        it("应展开合并转发中的混合消息并打包为父消息正文", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.FORWARD_MERGED,
+                [GMC.extraData]: Buffer.from("mock forward extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValueOnce({
+                extraMessages: [
+                    {
+                        msgId: "forward-1",
+                        msgType: MsgType.TEXT,
+                        msgTime: Math.floor(mockTimestamp / 1000),
+                        groupUin: mockGroupId,
+                        senderUin: "10001",
+                        sendMemberName: "张三",
+                        sendNickName: "",
+                        messages: [
+                            {
+                                messageId: "text_1",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "第一条"
+                            }
+                        ]
+                    },
+                    {
+                        msgId: "forward-2",
+                        msgType: MsgType.TEXT,
+                        msgTime: Math.floor(mockTimestamp / 1000),
+                        groupUin: mockGroupId,
+                        senderUin: "10002",
+                        sendMemberName: "李四",
+                        sendNickName: "",
+                        messages: [
+                            {
+                                messageId: "image_1",
+                                elementType: MsgElementType.IMAGE,
+                                imageText: "图片里的文字"
+                            }
+                        ]
+                    },
+                    {
+                        msgId: "forward-3",
+                        msgType: MsgType.GROUP_FILE,
+                        msgTime: Math.floor(mockTimestamp / 1000),
+                        groupUin: mockGroupId,
+                        senderUin: "10003",
+                        sendMemberName: "王五",
+                        sendNickName: "",
+                        messages: [
+                            {
+                                elementId: "file-element-1",
+                                elementType: MsgElementType.FILE,
+                                fileName: "资料.pdf"
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                [
+                    "[合并转发，共 3 条]",
+                    '("张三"): 第一条',
+                    '("李四"): [图片文字：图片里的文字]',
+                    '("王五"): [文件，文件名：资料.pdf]'
+                ].join("\n")
+            );
+            expect(result[0].mediaItems).toEqual([]);
+        });
+
+        it("应展开合并转发中的回复消息引用内容", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.FORWARD_MERGED,
+                [GMC.extraData]: Buffer.from("mock forward extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValueOnce({
+                extraMessages: [
+                    {
+                        msgId: "forward-reply",
+                        msgType: MsgType.REPLY,
+                        msgTime: Math.floor(mockTimestamp / 1000),
+                        groupUin: mockGroupId,
+                        senderUin: "10004",
+                        sendMemberName: "赵六",
+                        sendNickName: "",
+                        extraMessages: [
+                            {
+                                msgId: "quoted-forward",
+                                msgType: MsgType.TEXT,
+                                messages: [
+                                    {
+                                        messageId: "quoted_text",
+                                        elementType: MsgElementType.TEXT,
+                                        messageText: "被引用内容"
+                                    }
+                                ]
+                            }
+                        ],
+                        messages: [
+                            {
+                                messageId: "reply_text",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "回复正文"
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                ["[合并转发，共 1 条]", '("赵六"):【这条消息引用了其他人的消息: 被引用内容】回复正文'].join("\n")
+            );
+        });
+
+        it("合并转发嵌套过深时应停止继续展开", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.FORWARD_MERGED,
+                [GMC.extraData]: Buffer.from("mock forward extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValueOnce({
+                extraMessages: [
+                    {
+                        msgId: "forward-level-1",
+                        msgType: MsgType.FORWARD_MERGED,
+                        sendMemberName: "一层",
+                        extraMessages: [
+                            {
+                                msgId: "forward-level-2",
+                                msgType: MsgType.FORWARD_MERGED,
+                                sendMemberName: "二层",
+                                extraMessages: [
+                                    {
+                                        msgId: "forward-level-3",
+                                        msgType: MsgType.FORWARD_MERGED,
+                                        sendMemberName: "三层",
+                                        extraMessages: [
+                                            {
+                                                msgId: "forward-level-4",
+                                                msgType: MsgType.TEXT,
+                                                sendMemberName: "四层",
+                                                messages: [
+                                                    {
+                                                        messageId: "deep_text",
+                                                        elementType: MsgElementType.TEXT,
+                                                        messageText: "不应继续展开"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toContain("[合并转发，嵌套过深未继续展开]");
+            expect(result[0].messageContent).not.toContain("不应继续展开");
+        });
+
+        it("合并转发缓存解析失败时应回退到 XML 外壳正文", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.FORWARD_MERGED,
+                [GMC.extraData]: Buffer.from("invalid forward extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment
+                .mockImplementationOnce(() => {
+                    throw ErrorReasons.PROTOBUF_ERROR;
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "parent_xml",
+                            elementType: MsgElementType.XML,
+                            xmlMessage: "<msg><title>转发外壳</title></msg>"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[XML消息，转发外壳]");
+        });
+
+        it("合并转发外壳解析失败时仍应优先使用转发缓存", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.FORWARD_MERGED,
+                [GMC.extraData]: Buffer.from("mock forward extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValueOnce({
+                extraMessages: [
+                    {
+                        msgId: "forward-1",
+                        msgType: MsgType.TEXT,
+                        sendMemberName: "张三",
+                        messages: [
+                            {
+                                messageId: "text_1",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "缓存正文"
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(["[合并转发，共 1 条]", '("张三"): 缓存正文'].join("\n"));
+            expect(mockParserMethods.parseMessageSegment).toHaveBeenCalledTimes(1);
+        });
+
         it("应正确处理混合消息（文本+表情）", async () => {
             const mockRow = createMockDbRow();
 

@@ -4,7 +4,7 @@ syntax = "proto3";
 
 message Message {
   repeated MsgElement messages = 40800; // 注意：原文指出 48000 是消息段字段，疑似笔误
-  QuotedMsg extraMessage = 40900; // 引用消息
+  repeated StoredMsg extraMessages = 40900; // 引用消息或合并转发缓存
 }
 
 message MsgElement {
@@ -99,7 +99,7 @@ message FeedMessage {
 }
 
 // 这里的字段名其实就是GMC中的字段名，后续想拓展的话直接从那个ts文件里面拿就行
-message QuotedMsg {
+message StoredMsg {
     /**
      * 消息ID，具有唯一性
      */
@@ -114,6 +114,17 @@ message QuotedMsg {
      * 群聊消息ID，在每个聊天中依次递增
      */
     uint64 msgSeq = 40003;
+
+    uint32 chatType = 40010;
+    uint32 msgType = 40011;
+    uint32 subMsgType = 40012;
+    uint32 sendType = 40013;
+    string senderUid = 40020;
+    string peerUid = 40021;
+    uint64 peerUin = 40027;
+    uint64 groupUin = 40030;
+    uint64 senderUin = 40033;
+    uint32 msgTime = 40050;
 
     // /**
     //  * 发送者在群中的群名片（显示名称）：
@@ -134,4 +145,6 @@ message QuotedMsg {
     //  * 包含文本、图片、表情、文件等具体消息元素，需解析 protobuf 才能获取可读内容
     //  */
     repeated MsgElement messages = 40800;
+
+    repeated StoredMsg extraMessages = 40900;
 }
