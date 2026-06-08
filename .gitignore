@@ -45,3 +45,4 @@ pids.json
 .playwright-mcp/
 hxw.sh
 bash.exe.stackdump
+.VSCodeCounter/
