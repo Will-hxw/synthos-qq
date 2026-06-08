@@ -50,6 +50,13 @@ export async function schedulePipelineIntervalWithStartupRun(pipelineIntervalMin
         }
     );
 
+    if (pipelineJob.attrs.lockedAt) {
+        LOGGER.warning(`启动时发现 RunPipeline 残留锁，锁定时间: ${pipelineJob.attrs.lockedAt}`);
+        pipelineJob.attrs.lockedAt = undefined;
+        pipelineJob.attrs.failedAt = undefined;
+        pipelineJob.attrs.failReason = undefined;
+    }
+
     pipelineJob.schedule(new Date());
     await pipelineJob.save();
 }
