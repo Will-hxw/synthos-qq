@@ -37,8 +37,12 @@ export class OcrSpaceClient {
         timeoutMs: number
     ): Promise<OcrSpaceResult> {
         const formData = this._buildBaseFormData(config);
+        const fileType = this._resolveFileTypeFromDataUrl(base64Image);
 
         formData.set("base64Image", base64Image);
+        if (fileType) {
+            formData.set("filetype", fileType);
+        }
 
         return await this._submit(formData, config, timeoutMs);
     }
@@ -53,6 +57,28 @@ export class OcrSpaceClient {
         formData.set("isOverlayRequired", String(config.isOverlayRequired));
 
         return formData;
+    }
+
+    private _resolveFileTypeFromDataUrl(dataUrl: string): string {
+        const lowerDataUrl = dataUrl.slice(0, 64).toLowerCase();
+
+        if (lowerDataUrl.startsWith("data:image/jpeg") || lowerDataUrl.startsWith("data:image/jpg")) {
+            return "JPG";
+        }
+
+        if (lowerDataUrl.startsWith("data:image/png")) {
+            return "PNG";
+        }
+
+        if (lowerDataUrl.startsWith("data:image/gif")) {
+            return "GIF";
+        }
+
+        if (lowerDataUrl.startsWith("data:application/pdf")) {
+            return "PDF";
+        }
+
+        return "";
     }
 
     private async _submit(formData: FormData, config: OcrConfig, timeoutMs: number): Promise<OcrSpaceResult> {

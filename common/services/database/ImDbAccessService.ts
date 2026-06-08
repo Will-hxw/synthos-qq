@@ -234,7 +234,7 @@ export class ImDbAccessService extends Disposable {
                     ? hasSourcePath
                         ? "pending"
                         : "skipped"
-                    : hasSourceUrl
+                    : hasSourceUrl || hasSourcePath
                       ? "pending"
                       : "skipped";
 
@@ -244,7 +244,7 @@ export class ImDbAccessService extends Disposable {
                     sourceUrl, sourcePath, fileName, fileSize, duration,
                     width, height, picType, originImageMd5, qqImageText,
                     status, retryCount, createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mediaId) DO NOTHING`,
                 [
                     media.mediaId,

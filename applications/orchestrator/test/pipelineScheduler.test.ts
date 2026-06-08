@@ -1,9 +1,14 @@
 import "reflect-metadata";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
     const mockPipelineJob = {
+        attrs: {} as {
+            lockedAt?: Date;
+            failedAt?: Date;
+            failReason?: string;
+        },
         schedule: vi.fn(),
         save: vi.fn()
     };
@@ -87,12 +92,59 @@ import { TaskHandlerTypes } from "@root/common/scheduler/@types/Tasks";
 import { schedulePipelineIntervalWithStartupRun } from "../src/index";
 
 describe("schedulePipelineIntervalWithStartupRun", () => {
+    beforeEach(() => {
+        mocks.mockPipelineJob.schedule.mockClear();
+        mocks.mockPipelineJob.save.mockClear();
+        mocks.mockAgendaEvery.mockClear();
+        mocks.mockAgendaNow.mockClear();
+        mocks.mockAgendaCreate.mockClear();
+        mocks.mockAgendaDefine.mockClear();
+        mocks.mockAgendaJobs.mockClear();
+        mocks.mockAgendaStart.mockClear();
+        mocks.mockCleanupStaleJobs.mockClear();
+        mocks.mockScheduleAndWaitForJob.mockClear();
+        mocks.mockRegisterConfigManagerService.mockClear();
+        mocks.mockGetCurrentConfig.mockClear();
+        mocks.mockSetupReportScheduler.mockClear();
+        mocks.mockPipelineJob.attrs = {};
+        mocks.mockPipelineJob.schedule.mockReturnValue(mocks.mockPipelineJob);
+        mocks.mockAgendaEvery.mockResolvedValue(mocks.mockPipelineJob);
+        mocks.mockAgendaJobs.mockResolvedValue([{ name: "registered" }]);
+        mocks.mockScheduleAndWaitForJob.mockResolvedValue(true);
+        mocks.mockGetCurrentConfig.mockResolvedValue({
+            orchestrator: {
+                pipelineIntervalInMinutes: 30,
+                dataSeekTimeWindowInHours: 1
+            },
+            groupConfigs: {
+                "group-a": {}
+            }
+        });
+    });
+
     it("启动立即执行应复用唯一周期任务，不应额外插入一次性 RunPipeline", async () => {
         await schedulePipelineIntervalWithStartupRun(30);
 
         expect(mocks.mockAgendaEvery).toHaveBeenCalledWith("30 minutes", TaskHandlerTypes.RunPipeline, undefined, {
             skipImmediate: true
         });
+        expect(mocks.mockPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
+        expect(mocks.mockPipelineJob.save).toHaveBeenCalledTimes(1);
+        expect(mocks.mockAgendaNow).not.toHaveBeenCalled();
+    });
+
+    it("启动立即执行应释放周期 RunPipeline 的残留锁", async () => {
+        mocks.mockPipelineJob.attrs = {
+            lockedAt: new Date("2026-06-09T03:33:38.645+08:00"),
+            failedAt: new Date("2026-06-09T03:29:02.927+08:00"),
+            failReason: "ProvideData task failed"
+        };
+
+        await schedulePipelineIntervalWithStartupRun(30);
+
+        expect(mocks.mockPipelineJob.attrs.lockedAt).toBeUndefined();
+        expect(mocks.mockPipelineJob.attrs.failedAt).toBeUndefined();
+        expect(mocks.mockPipelineJob.attrs.failReason).toBeUndefined();
         expect(mocks.mockPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
         expect(mocks.mockPipelineJob.save).toHaveBeenCalledTimes(1);
         expect(mocks.mockAgendaNow).not.toHaveBeenCalled();

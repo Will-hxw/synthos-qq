@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import path from "path";
+import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -149,6 +152,55 @@ describe("ImageUnderstandingTaskHandler", () => {
         });
     });
 
+    it("存在本地缓存路径时应使用 base64 图片调用 OCR 和视觉理解", async () => {
+        const tempRoot = await mkdtemp(path.join(tmpdir(), "synthos-image-"));
+        const dbBasePath = path.join(tempRoot, "nt_qq", "nt_db");
+        const relativeImagePath = path.join("nt_qq", "nt_data", "Pic", "2026-06", "Thumb", "abc.png");
+        const absoluteImagePath = path.join(tempRoot, relativeImagePath);
+        const config = createConfig();
+
+        (config as any).dataProviders = {
+            QQ: {
+                dbBasePath
+            }
+        };
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue(config);
+        mockImDbAccessService.getPendingImageMediaByGroupIdsAndTimeRange.mockResolvedValue([
+            createMedia({
+                mediaId: "msg-1:0",
+                sourceUrl: null,
+                sourcePath: relativeImagePath
+            })
+        ]);
+        mocks.mockParseBase64Image.mockResolvedValue({
+            text: "缓存图文字",
+            isSuccess: true,
+            failReason: ""
+        });
+
+        await mkdir(path.dirname(absoluteImagePath), { recursive: true });
+        await writeFile(absoluteImagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+        try {
+            const handler = new ImageUnderstandingTaskHandler(
+                mockConfigManagerService as any,
+                mockImDbAccessService as any
+            );
+
+            await handler.register();
+            await runRegisteredTask();
+
+            const ocrDataUrl = mocks.mockParseBase64Image.mock.calls[0][0] as string;
+            const visionDataUrl = mocks.mockUnderstandImage.mock.calls[0][0] as string;
+
+            expect(mocks.mockParseImageUrl).not.toHaveBeenCalled();
+            expect(ocrDataUrl.startsWith("data:image/png;base64,")).toBe(true);
+            expect(visionDataUrl.startsWith("data:image/png;base64,")).toBe(true);
+        } finally {
+            await rm(tempRoot, { recursive: true, force: true });
+        }
+    });
+
     it("OCR 成功但视觉理解失败时应降级为 OCR 文本并标记 success", async () => {
         mockImDbAccessService.getPendingImageMediaByGroupIdsAndTimeRange.mockResolvedValue([
             createMedia({ mediaId: "msg-1:0" })
@@ -178,7 +230,7 @@ describe("ImageUnderstandingTaskHandler", () => {
         });
     });
 
-    it("图片缺少 URL 时应标记 skipped", async () => {
+    it("图片缺少 URL 和本地缓存路径时应标记 skipped", async () => {
         mockImDbAccessService.getPendingImageMediaByGroupIdsAndTimeRange.mockResolvedValue([
             createMedia({
                 mediaId: "msg-1:0",
@@ -195,7 +247,7 @@ describe("ImageUnderstandingTaskHandler", () => {
 
         expect(mockImDbAccessService.updateChatMessageMediaUnderstanding).toHaveBeenCalledWith("msg-1:0", {
             status: "skipped",
-            failReason: "图片缺少可访问 URL"
+            failReason: "图片缺少可访问 URL 或本地缓存路径"
         });
     });
 });

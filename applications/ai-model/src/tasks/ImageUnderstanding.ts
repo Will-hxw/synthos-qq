@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import path from "path";
+import { promises as fs } from "fs";
+
 import { injectable, inject } from "tsyringe";
 import { agendaInstance } from "@root/common/scheduler/agenda";
 import { TaskHandlerTypes, TaskParameters } from "@root/common/scheduler/@types/Tasks";
@@ -143,10 +146,10 @@ export class ImageUnderstandingTaskHandler {
                 return;
             }
 
-            if (!media.sourceUrl) {
+            if (!media.sourceUrl && !media.sourcePath) {
                 await this.imDbAccessService.updateChatMessageMediaUnderstanding(media.mediaId, {
                     status: "skipped",
-                    failReason: "图片缺少可访问 URL"
+                    failReason: "图片缺少可访问 URL 或本地缓存路径"
                 });
                 stats.skipped++;
 
@@ -163,29 +166,33 @@ export class ImageUnderstandingTaskHandler {
                 stats.ocrFailed++;
             }
 
-            try {
-                const prompt = (
-                    await ImageUnderstandingPromptStore.getImageUnderstandingPrompt(
-                        ocrText,
-                        media.messageContent || ""
-                    )
-                ).serializeToString();
+            if (media.sourceUrl && !media.sourcePath && this._isHttpUrl(media.sourceUrl)) {
+                try {
+                    const prompt = (
+                        await ImageUnderstandingPromptStore.getImageUnderstandingPrompt(
+                            ocrText,
+                            media.messageContent || ""
+                        )
+                    ).serializeToString();
 
-                visionResult = await this.dashScopeVisionClient.understandImage(
-                    media.sourceUrl,
-                    prompt,
-                    imageUnderstandingConfig.vision,
-                    imageUnderstandingConfig.requestTimeoutMs
-                );
-            } catch (error) {
-                visionFailReason = this._formatUnknownError(error);
-                stats.visionFailed++;
+                    visionResult = await this.dashScopeVisionClient.understandImage(
+                        media.sourceUrl,
+                        prompt,
+                        imageUnderstandingConfig.vision,
+                        imageUnderstandingConfig.requestTimeoutMs
+                    );
+                } catch (error) {
+                    visionFailReason = this._formatUnknownError(error);
+                }
+            }
 
+            if (!visionResult) {
                 try {
                     imageDataUrl =
                         imageDataUrl ||
-                        (await this._fetchImageAsDataUrl(
-                            media.sourceUrl,
+                        (await this._loadImageAsDataUrl(
+                            media,
+                            config,
                             imageUnderstandingConfig.ocr.maxImageBytes
                         ));
                     const prompt = (
@@ -204,6 +211,7 @@ export class ImageUnderstandingTaskHandler {
                     visionFailReason = "";
                 } catch (fallbackError) {
                     visionFailReason = this._formatUnknownError(fallbackError);
+                    stats.visionFailed++;
                 }
             }
 
@@ -258,32 +266,30 @@ export class ImageUnderstandingTaskHandler {
         config: GlobalConfig
     ): Promise<{ text: string; failReason: string; imageDataUrl: ImageDataUrlResult | null }> {
         const imageUnderstandingConfig = config.ai.imageUnderstanding;
+        let urlFailReason = "";
 
-        if (!media.sourceUrl) {
-            return {
-                text: "",
-                failReason: "图片缺少可访问 URL",
-                imageDataUrl: null
-            };
-        }
+        if (media.sourceUrl && !media.sourcePath && this._isHttpUrl(media.sourceUrl)) {
+            const urlResult = await this.ocrSpaceClient.parseImageUrl(
+                media.sourceUrl,
+                imageUnderstandingConfig.ocr,
+                imageUnderstandingConfig.requestTimeoutMs
+            );
 
-        const urlResult = await this.ocrSpaceClient.parseImageUrl(
-            media.sourceUrl,
-            imageUnderstandingConfig.ocr,
-            imageUnderstandingConfig.requestTimeoutMs
-        );
+            if (urlResult.text || urlResult.isSuccess) {
+                return {
+                    text: urlResult.text,
+                    failReason: urlResult.failReason,
+                    imageDataUrl: null
+                };
+            }
 
-        if (urlResult.text || urlResult.isSuccess) {
-            return {
-                text: urlResult.text,
-                failReason: urlResult.failReason,
-                imageDataUrl: null
-            };
+            urlFailReason = urlResult.failReason;
         }
 
         try {
-            const imageDataUrl = await this._fetchImageAsDataUrl(
-                media.sourceUrl,
+            const imageDataUrl = await this._loadImageAsDataUrl(
+                media,
+                config,
                 imageUnderstandingConfig.ocr.maxImageBytes
             );
             const base64Result = await this.ocrSpaceClient.parseBase64Image(
@@ -294,13 +300,13 @@ export class ImageUnderstandingTaskHandler {
 
             return {
                 text: base64Result.text,
-                failReason: base64Result.failReason || urlResult.failReason,
+                failReason: base64Result.failReason || urlFailReason,
                 imageDataUrl
             };
         } catch (error) {
             return {
                 text: "",
-                failReason: this._joinReasons([urlResult.failReason, this._formatUnknownError(error)]),
+                failReason: this._joinReasons([urlFailReason, this._formatUnknownError(error)]),
                 imageDataUrl: null
             };
         }
@@ -350,6 +356,123 @@ export class ImageUnderstandingTaskHandler {
             dataUrl: `data:${contentType};base64,${base64}`,
             byteLength
         };
+    }
+
+    private async _loadImageAsDataUrl(
+        media: PendingChatMessageMedia,
+        config: GlobalConfig,
+        maxImageBytes: number
+    ): Promise<ImageDataUrlResult> {
+        if (media.sourcePath) {
+            return await this._readQQImageSourcePathAsDataUrl(
+                config.dataProviders.QQ.dbBasePath,
+                media.sourcePath,
+                maxImageBytes
+            );
+        }
+
+        if (media.sourceUrl && this._isHttpUrl(media.sourceUrl)) {
+            return await this._fetchImageAsDataUrl(media.sourceUrl, maxImageBytes);
+        }
+
+        throw new Error("图片缺少可访问 URL 或本地缓存路径");
+    }
+
+    private async _readImagePathAsDataUrl(imagePath: string, maxImageBytes: number): Promise<ImageDataUrlResult> {
+        const buffer = await fs.readFile(imagePath);
+        const byteLength = buffer.byteLength;
+
+        if (byteLength > maxImageBytes) {
+            throw new Error(`图片大小 ${byteLength} 超过上限 ${maxImageBytes}`);
+        }
+
+        return {
+            dataUrl: `data:${this._inferImageContentType(imagePath)};base64,${buffer.toString("base64")}`,
+            byteLength
+        };
+    }
+
+    private async _readQQImageSourcePathAsDataUrl(
+        dbBasePath: string,
+        sourcePath: string,
+        maxImageBytes: number
+    ): Promise<ImageDataUrlResult> {
+        const candidatePaths = this._resolveQQImageFilePathCandidates(dbBasePath, sourcePath);
+        let lastError: unknown = null;
+
+        if (candidatePaths.length === 0) {
+            throw new Error("图片缓存路径超出 QQ 媒体根目录");
+        }
+
+        for (const candidatePath of candidatePaths) {
+            try {
+                return await this._readImagePathAsDataUrl(candidatePath, maxImageBytes);
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        throw lastError || new Error("图片缓存文件不存在");
+    }
+
+    private _resolveQQImageFilePathCandidates(dbBasePath: string, sourcePath: string): string[] {
+        const accountRootPath = path.dirname(path.dirname(path.resolve(dbBasePath)));
+        const tencentFilesRootPath = path.dirname(accountRootPath);
+        const normalizedSourcePath = path.normalize(sourcePath);
+        const candidatePaths = path.isAbsolute(normalizedSourcePath)
+            ? [path.resolve(normalizedSourcePath)]
+            : [
+                  path.resolve(accountRootPath, normalizedSourcePath),
+                  path.resolve(tencentFilesRootPath, normalizedSourcePath)
+              ];
+
+        return [...new Set(candidatePaths)].filter(candidatePath =>
+            this._isPathInsideAnyRoot(candidatePath, [accountRootPath, tencentFilesRootPath])
+        );
+    }
+
+    private _isPathInsideAnyRoot(candidatePath: string, rootPaths: string[]): boolean {
+        for (const rootPath of rootPaths) {
+            const relativePath = path.relative(rootPath, candidatePath);
+
+            if (relativePath && relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private _inferImageContentType(imagePath: string): string {
+        const extension = path.extname(imagePath).toLowerCase();
+
+        if (extension === ".png") {
+            return "image/png";
+        }
+
+        if (extension === ".gif") {
+            return "image/gif";
+        }
+
+        if (extension === ".webp") {
+            return "image/webp";
+        }
+
+        return "image/jpeg";
+    }
+
+    private _isHttpUrl(value: string | null | undefined): boolean {
+        if (!value) {
+            return false;
+        }
+
+        try {
+            const url = new URL(value);
+
+            return url.protocol === "http:" || url.protocol === "https:";
+        } catch {
+            return false;
+        }
     }
 
     private _buildOcrOnlyUnderstandingText(ocrText: string): string {

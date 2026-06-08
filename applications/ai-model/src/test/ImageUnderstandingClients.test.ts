@@ -41,26 +41,50 @@ describe("OcrSpaceClient", () => {
     });
 
     it("OCR.space 部分成功时应保留文本并记录降级原因", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi.fn().mockResolvedValue(
-                new Response(
-                    JSON.stringify({
-                        ParsedResults: [{ ParsedText: "可读文字" }],
-                        IsErroredOnProcessing: true,
-                        ErrorMessage: "部分页面失败"
-                    }),
-                    { status: 200 }
-                )
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    ParsedResults: [{ ParsedText: "可读文字" }],
+                    IsErroredOnProcessing: true,
+                    ErrorMessage: "部分页面失败"
+                }),
+                { status: 200 }
             )
         );
 
+        vi.stubGlobal("fetch", fetchMock);
+
         const client = new OcrSpaceClient();
         const result = await client.parseBase64Image("data:image/png;base64,AAAA", createOcrConfig(), 30000);
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        const formData = init.body as FormData;
 
+        expect(formData.get("filetype")).toBe("PNG");
         expect(result.text).toBe("可读文字");
         expect(result.isSuccess).toBe(false);
         expect(result.failReason).toBe("部分页面失败");
+    });
+
+    it("OCR.space base64 JPG 请求应补充 filetype 参数", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    ParsedResults: [],
+                    IsErroredOnProcessing: false
+                }),
+                { status: 200 }
+            )
+        );
+
+        vi.stubGlobal("fetch", fetchMock);
+
+        const client = new OcrSpaceClient();
+
+        await client.parseBase64Image("data:image/jpeg;base64,AAAA", createOcrConfig(), 30000);
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        const formData = init.body as FormData;
+
+        expect(formData.get("filetype")).toBe("JPG");
     });
 });
 

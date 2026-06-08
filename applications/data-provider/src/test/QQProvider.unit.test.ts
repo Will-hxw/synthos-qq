@@ -434,6 +434,40 @@ describe("QQProvider", () => {
             ]);
         });
 
+        it("图片媒体元信息应保留本地缓存路径并忽略 QQNT 相对下载地址", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.IMAGE,
+                        imageUrlOrigin: "/download?appid=1407&fileid=abc&spec=0",
+                        imageUrlHigh: "",
+                        imageUrlLow: "",
+                        picWidth: 640,
+                        picHeight: 480,
+                        picType: 1000,
+                        picThumbPath: "nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg",
+                        originImageMd5: "",
+                        imageText: ""
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].mediaItems).toEqual([
+                expect.objectContaining({
+                    mediaId: `${mockMsgId}:0`,
+                    sourceUrl: undefined,
+                    sourcePath: path.normalize("nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg")
+                })
+            ]);
+        });
+
         it("应正确处理语音消息", async () => {
             const mockRow = createMockDbRow();
             const qqMediaRootPath = path.dirname(
@@ -626,7 +660,113 @@ describe("QQProvider", () => {
             );
         });
 
-        it("应从卡片消息中提取可读文本", async () => {
+        it("应从 B站应用卡片的深层字段中提取主跳转链接", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: JSON.stringify({
+                            ver: "1.0",
+                            prompt: "[应用] 哔哩哔哩",
+                            config: {
+                                type: "normal",
+                                token: "mock-token"
+                            },
+                            app: "com.tencent.tuwen.lua",
+                            view: "news",
+                            meta: {
+                                detail_1: {
+                                    title: "B站视频标题",
+                                    desc: "视频简介",
+                                    icon: "https://open.gtimg.cn/icon.png",
+                                    preview: "https://qq.ugcimg.cn/preview.jpg",
+                                    qqdocurl: "https://b23.tv/abc123"
+                                }
+                            }
+                        })
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                "[卡片消息，来源：B站，标题：B站视频标题，描述：视频简介，链接：https://b23.tv/abc123]"
+            );
+        });
+
+        it("应从小红书应用卡片中提取 jumpUrl", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: JSON.stringify({
+                            meta: {
+                                news: {
+                                    tag: "小红书",
+                                    title: "小红书笔记标题",
+                                    desc: "笔记摘要",
+                                    preview: "https://pic.ugcimg.cn/preview.jpg",
+                                    jumpUrl: "https://www.xiaohongshu.com/discovery/item/abc"
+                                }
+                            }
+                        })
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                "[卡片消息，来源：小红书，标题：小红书笔记标题，描述：笔记摘要，链接：https://www.xiaohongshu.com/discovery/item/abc]"
+            );
+        });
+
+        it("应过滤封面图和图标链接并保留主跳转链接", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: JSON.stringify({
+                            meta: {
+                                detail_1: {
+                                    title: "腾讯文档标题",
+                                    desc: "文档说明",
+                                    icon: "https://miniapp.gtimg.cn/icon.png",
+                                    preview: "https://qq.ugcimg.cn/preview.jpg",
+                                    qqdocurl: "https://docs.qq.com/doc/abc"
+                                }
+                            }
+                        })
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                "[卡片消息，来源：腾讯文档，标题：腾讯文档标题，描述：文档说明，链接：https://docs.qq.com/doc/abc]"
+            );
+            expect(result[0].messageContent).not.toContain("miniapp.gtimg.cn");
+            expect(result[0].messageContent).not.toContain("qq.ugcimg.cn");
+        });
+
+        it("应兼容简单卡片的 title desc url 结构", async () => {
             const mockRow = createMockDbRow();
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
@@ -647,7 +787,56 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("[卡片消息，分享标题；分享描述；https://example.com/a]");
+            expect(result[0].messageContent).toBe(
+                "[卡片消息，来源：example.com，标题：分享标题，描述：分享描述，链接：https://example.com/a]"
+            );
+        });
+
+        it("卡片没有主跳转链接时不应输出空链接字段", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: JSON.stringify({
+                            appName: "课程通知",
+                            title: "报名通知",
+                            desc: "截止时间 6 月 10 日"
+                        })
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                "[卡片消息，来源：课程通知，标题：报名通知，描述：截止时间 6 月 10 日]"
+            );
+            expect(result[0].messageContent).not.toContain("链接：");
+        });
+
+        it("非 JSON 卡片应保持文本兜底解析", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.CARD,
+                        applicationMessage: "<msg><title>分享标题</title></msg>"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[卡片消息，分享标题]");
         });
 
         it("应正确处理混合消息（文本+表情）", async () => {

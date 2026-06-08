@@ -21,6 +21,7 @@ import { COMMON_TOKENS } from "../../di/tokens";
 import { GroupMsgColumn as GMC } from "./@types/mappers/GroupMsgColumn";
 import { RawGroupMsgFromDB } from "./@types/RawGroupMsgFromDB";
 import { MessagePBParser } from "./parsers/MessagePBParser";
+import { formatApplicationCardMessage } from "./formatters/ApplicationCardMessageFormatter";
 import { MsgElementType } from "./@types/mappers/MsgElementType";
 import { MsgElement } from "./@types/RawMsgContentParseResult";
 import { MsgType } from "./@types/mappers/MsgType";
@@ -407,7 +408,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                     break;
                 }
                 case MsgElementType.CARD: {
-                    result += this._formatStructuredMessage("卡片消息", rawMsgElement.applicationMessage);
+                    result += formatApplicationCardMessage(rawMsgElement.applicationMessage);
                     break;
                 }
                 case MsgElementType.XML: {
@@ -446,9 +447,10 @@ export class QQProvider extends Disposable implements IIMProvider {
         mediaOwner: MediaOwnerInfo,
         elementIndex: number
     ): RawChatMessageMedia {
-        const sourceUrl = this._normalizeInlineText(
+        const sourceUrl = this._normalizeImageSourceUrl(
             element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow
         );
+        const sourcePath = this._normalizeQQSourcePath(element.picThumbPath);
         const originImageMd5 = this._normalizeInlineText(element.originImageMd5);
         const qqImageText = this._normalizeInlineText(element.imageText);
 
@@ -461,12 +463,33 @@ export class QQProvider extends Disposable implements IIMProvider {
             mediaType: "image",
             sourceProvider: "QQ",
             sourceUrl: sourceUrl || undefined,
+            sourcePath: sourcePath || undefined,
             width: element.picWidth > 0 ? element.picWidth : undefined,
             height: element.picHeight > 0 ? element.picHeight : undefined,
             picType: element.picType > 0 ? element.picType : undefined,
             originImageMd5: originImageMd5 || undefined,
             qqImageText: qqImageText || undefined
         };
+    }
+
+    private _normalizeImageSourceUrl(imageUrl: string | null | undefined): string {
+        const normalized = this._normalizeInlineText(imageUrl);
+
+        if (!normalized) {
+            return "";
+        }
+
+        try {
+            const absoluteUrl = new URL(normalized);
+
+            if (absoluteUrl.protocol === "http:" || absoluteUrl.protocol === "https:") {
+                return absoluteUrl.toString();
+            }
+
+            return "";
+        } catch {
+            return "";
+        }
     }
 
     private async _buildAudioMediaItem(

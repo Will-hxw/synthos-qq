@@ -30,6 +30,10 @@ describe("ImDbAccessService", () => {
         mockCommonDBService.run.mockClear();
     }
 
+    function countSqlPlaceholders(sql: unknown): number {
+        return String(sql).split("?").length - 1;
+    }
+
     it("根据不存在的消息id查询raw消息时应抛错", async () => {
         mockCommonDBService.get.mockResolvedValue(undefined);
         const service = new ImDbAccessService();
@@ -84,6 +88,7 @@ describe("ImDbAccessService", () => {
         expect(mockCommonDBService.run).toHaveBeenCalledWith("BEGIN IMMEDIATE TRANSACTION");
         expect(mockCommonDBService.run).toHaveBeenCalledWith("COMMIT");
         expect(mediaInsertCall).toBeDefined();
+        expect(countSqlPlaceholders(mediaInsertCall![0])).toBe(mediaInsertCall![1].length);
         expect(mediaInsertCall![1]).toEqual([
             "msg-1:0",
             "msg-1",
@@ -141,6 +146,42 @@ describe("ImDbAccessService", () => {
         );
 
         expect(mediaInsertCall![1][17]).toBe("skipped");
+    });
+
+    it("只有本地缓存路径的图片媒体入库时应标记为 pending", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[图片，含本地缓存]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "image",
+                        sourceProvider: "QQ",
+                        sourcePath: "nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg"
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+
+        expect(mediaInsertCall![1][8]).toBe("nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg");
+        expect(mediaInsertCall![1][17]).toBe("pending");
     });
 
     it("音频媒体入库时应按源文件路径决定 pending 或 skipped 状态", async () => {

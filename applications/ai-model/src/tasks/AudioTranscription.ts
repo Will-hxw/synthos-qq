@@ -20,6 +20,7 @@ interface AudioTranscriptionStats {
     success: number;
     failed: number;
     skipped: number;
+    retrying: number;
     totalDurationMs: number;
 }
 
@@ -55,6 +56,13 @@ export class AudioTranscriptionTaskHandler {
                 const config = await this.configManagerService.getCurrentConfig();
                 const audioTranscriptionConfig = config.ai.audioTranscription;
 
+                this.LOGGER.info(
+                    `语音转文字任务参数：groupCount=${attrs.groupIds.length}，timeStart=${attrs.startTimeStamp}，timeEnd=${attrs.endTimeStamp}`
+                );
+                this.LOGGER.info(
+                    `语音转文字配置：enabled=${audioTranscriptionConfig.enabled}，baseURL=${audioTranscriptionConfig.baseURL}，model=${audioTranscriptionConfig.model}，language=${audioTranscriptionConfig.language}，batchSize=${audioTranscriptionConfig.batchSize}，maxRetryCount=${audioTranscriptionConfig.maxRetryCount}，requestTimeoutMs=${audioTranscriptionConfig.requestTimeoutMs}，maxAudioBase64Bytes=${audioTranscriptionConfig.maxAudioBase64Bytes}`
+                );
+
                 if (!audioTranscriptionConfig.enabled) {
                     this.LOGGER.info("语音转文字未启用，跳过当前任务");
 
@@ -67,6 +75,7 @@ export class AudioTranscriptionTaskHandler {
                     return;
                 }
 
+                this.LOGGER.info("开始查询待处理语音媒体记录");
                 const mediaItems = await this.imDbAccessService.getPendingAudioMediaByGroupIdsAndTimeRange(
                     attrs.groupIds,
                     attrs.startTimeStamp,
@@ -75,7 +84,7 @@ export class AudioTranscriptionTaskHandler {
                 );
 
                 if (mediaItems.length === 0) {
-                    this.LOGGER.info("没有需要语音转文字处理的新音频");
+                    this.LOGGER.info("没有需要语音转文字处理的新音频，当前任务结束");
 
                     return;
                 }
@@ -92,7 +101,7 @@ export class AudioTranscriptionTaskHandler {
                     stats.processed === 0 ? 0 : Math.round(stats.totalDurationMs / stats.processed);
 
                 this.LOGGER.success(
-                    `语音转文字完成：处理=${stats.processed}，成功=${stats.success}，失败=${stats.failed}，跳过=${stats.skipped}，平均耗时=${averageDurationMs}ms`
+                    `语音转文字完成：处理=${stats.processed}，成功=${stats.success}，失败=${stats.failed}，等待重试=${stats.retrying}，跳过=${stats.skipped}，平均耗时=${averageDurationMs}ms`
                 );
             },
             {
@@ -108,6 +117,7 @@ export class AudioTranscriptionTaskHandler {
             success: 0,
             failed: 0,
             skipped: 0,
+            retrying: 0,
             totalDurationMs: 0
         };
     }
@@ -121,9 +131,15 @@ export class AudioTranscriptionTaskHandler {
         const audioTranscriptionConfig = config.ai.audioTranscription;
 
         stats.processed++;
+        this.LOGGER.info(
+            `开始处理语音媒体：${this._formatMediaForLog(media)}，retryCount=${media.retryCount}/${audioTranscriptionConfig.maxRetryCount}`
+        );
 
         try {
             if (media.retryCount > audioTranscriptionConfig.maxRetryCount) {
+                this.LOGGER.warning(
+                    `语音媒体超过最大重试次数，直接标记失败：${this._formatMediaForLog(media)}，retryCount=${media.retryCount}，maxRetryCount=${audioTranscriptionConfig.maxRetryCount}`
+                );
                 await this.imDbAccessService.updateChatMessageMediaTranscription(media.mediaId, {
                     status: "failed",
                     failReason: "语音转文字超过最大重试次数"
@@ -134,6 +150,7 @@ export class AudioTranscriptionTaskHandler {
             }
 
             if (!media.sourcePath) {
+                this.LOGGER.warning(`语音媒体缺少源文件路径，标记 skipped：${this._formatMediaForLog(media)}`);
                 await this.imDbAccessService.updateChatMessageMediaTranscription(media.mediaId, {
                     status: "skipped",
                     failReason: "语音缺少可定位的源文件路径"
@@ -147,11 +164,29 @@ export class AudioTranscriptionTaskHandler {
                 config.dataProviders.QQ.dbBasePath,
                 media.sourcePath
             );
+
+            this.LOGGER.debug(
+                `语音源文件路径校验通过：${this._formatMediaForLog(media)}，sourcePath=${this._truncateText(media.sourcePath, 160)}`
+            );
+            const convertStartedAt = Date.now();
             const audioDataUrl = await this.audioDataUrlService.readAsWavDataUrl(
                 audioFilePath,
                 audioTranscriptionConfig.maxAudioBase64Bytes
             );
+
+            this.LOGGER.info(
+                `语音文件转换完成：${this._formatMediaForLog(media)}，dataUrlBytes=${audioDataUrl.byteLength}，durationMs=${audioDataUrl.durationMs}，costMs=${Date.now() - convertStartedAt}`
+            );
+            const asrStartedAt = Date.now();
+
+            this.LOGGER.info(
+                `开始调用 Mimo ASR：${this._formatMediaForLog(media)}，model=${audioTranscriptionConfig.model}，language=${audioTranscriptionConfig.language}，timeoutMs=${audioTranscriptionConfig.requestTimeoutMs}`
+            );
             const transcript = await this.mimoAsrClient.transcribe(audioDataUrl.dataUrl, audioTranscriptionConfig);
+
+            this.LOGGER.info(
+                `Mimo ASR 返回转写：${this._formatMediaForLog(media)}，transcriptLength=${transcript.length}，costMs=${Date.now() - asrStartedAt}`
+            );
             const messageContent = `[语音转文字：${transcript}]`;
             const preProcessedContent = await this._buildPreProcessedContent(media.msgId, messageContent);
 
@@ -168,6 +203,9 @@ export class AudioTranscriptionTaskHandler {
                 }
             );
             stats.success++;
+            this.LOGGER.success(
+                `语音转文字写回成功：${this._formatMediaForLog(media)}，hasPreProcessedContent=${preProcessedContent !== null}，totalCostMs=${Date.now() - startedAt}`
+            );
         } catch (error) {
             await this._markFailedOrRetry(media, this._formatUnknownError(error), config, stats);
         } finally {
@@ -181,9 +219,14 @@ export class AudioTranscriptionTaskHandler {
         };
 
         if (!message.sessionId) {
+            this.LOGGER.debug(`消息尚未分配 sessionId，跳过预处理文本重算：msgId=${msgId}`);
+
             return null;
         }
 
+        this.LOGGER.debug(
+            `消息已有 sessionId，开始重算预处理文本：msgId=${msgId}，sessionId=${message.sessionId}`
+        );
         const updatedMessage: RawChatMessage = {
             ...message,
             messageContent
@@ -196,6 +239,10 @@ export class AudioTranscriptionTaskHandler {
         }
 
         const mediaMap = await this.imDbAccessService.getChatMessageMediaByMsgIds(mediaMsgIds);
+
+        this.LOGGER.debug(
+            `预处理文本重算上下文加载完成：msgId=${msgId}，mediaMsgCount=${mediaMsgIds.length}，hasQuotedMsg=${quotedMsg !== null}`
+        );
 
         return formatMsg(
             updatedMessage,
@@ -236,10 +283,15 @@ export class AudioTranscriptionTaskHandler {
         });
 
         if (shouldRetry) {
-            this.LOGGER.warning(`语音转文字失败，等待下轮重试：mediaId=${media.mediaId}，msgId=${media.msgId}`);
+            stats.retrying++;
+            this.LOGGER.warning(
+                `语音转文字失败，等待下轮重试：${this._formatMediaForLog(media)}，nextRetryCount=${nextRetryCount}，failReason=${this._truncateText(failReason, 160)}`
+            );
         } else {
             stats.failed++;
-            this.LOGGER.warning(`语音转文字最终失败：mediaId=${media.mediaId}，msgId=${media.msgId}`);
+            this.LOGGER.warning(
+                `语音转文字最终失败：${this._formatMediaForLog(media)}，retryCount=${nextRetryCount}，failReason=${this._truncateText(failReason, 160)}`
+            );
         }
     }
 
@@ -256,6 +308,12 @@ export class AudioTranscriptionTaskHandler {
         }
 
         return candidatePath;
+    }
+
+    private _formatMediaForLog(media: PendingChatMessageMedia): string {
+        const fileNamePart = media.fileName ? `，fileName=${this._truncateText(media.fileName, 120)}` : "";
+
+        return `mediaId=${media.mediaId}，msgId=${media.msgId}，elementIndex=${media.elementIndex}${fileNamePart}`;
     }
 
     private _formatUnknownError(error: unknown): string {
