@@ -1,5 +1,5 @@
 # QQ 客户端数据库分析参考
-
+https://linux.do/t/topic/416092
 > 分析目标路径：`/data/user/0/com.tencent.mobileqq/databases/nt_db/nt_qq_{QQ_path_hash}/`
 > 其余客户端基本也符合此结构。
 >
