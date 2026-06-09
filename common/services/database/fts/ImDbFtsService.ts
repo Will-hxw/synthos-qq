@@ -116,13 +116,15 @@ export class ImDbFtsService extends Disposable {
             senderId?: string;
         }>
     ): Promise<void> {
+        // 即使消息为空，也必须 drop + recreate：否则主库被清空后“重建”会保留旧索引，
+        // 返回过期数据。空输入时重建出一张空表即可。
+        await this._dropAndRecreateTable();
+
         if (messages.length === 0) {
-            this.LOGGER.warning("rebuildIndex 收到空数组，将跳过");
+            this.LOGGER.warning("rebuildIndex 收到空数组，已重建为空索引");
 
             return;
         }
-
-        await this._dropAndRecreateTable();
 
         const MAX_SQLITE_PARAMS = 999;
         const paramsPerRecord = 9;
