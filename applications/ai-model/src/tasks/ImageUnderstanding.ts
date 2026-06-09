@@ -157,15 +157,8 @@ export class ImageUnderstandingTaskHandler {
                 ["image"]
             );
             const message = this._formatImageMediaStatusSummary(rows, stage);
-            const skippedCount = rows
-                .filter(row => row.mediaType === "image" && row.status === "skipped")
-                .reduce((sum, row) => sum + Number(row.count || 0), 0);
 
-            if (skippedCount > 0) {
-                this.LOGGER.warning(message);
-            } else {
-                this.LOGGER.info(message);
-            }
+            this.LOGGER.info(message);
         } catch (error) {
             this.LOGGER.warning(`图片理解媒体诊断统计失败：${this._formatUnknownError(error)}`);
         }
@@ -230,7 +223,7 @@ export class ImageUnderstandingTaskHandler {
                     failReason
                 });
                 stats.skipped++;
-                this._logImageUnderstandingAudit(media, "skipped", "", "", "", null, failReason, "warning");
+                this._logImageUnderstandingAudit(media, "skipped", "", "", "", null, failReason, "debug");
 
                 return;
             }
@@ -422,7 +415,7 @@ export class ImageUnderstandingTaskHandler {
         understandingText: string | null,
         modelName: string | null,
         failReason: string | null,
-        level: "success" | "warning"
+        level: "success" | "warning" | "debug"
     ): void {
         const message =
             `图片理解审计：mediaId=${media.mediaId}` +
@@ -436,6 +429,8 @@ export class ImageUnderstandingTaskHandler {
 
         if (level === "success") {
             this.LOGGER.success(message);
+        } else if (level === "debug") {
+            this.LOGGER.debug(message);
         } else {
             this.LOGGER.warning(message);
         }

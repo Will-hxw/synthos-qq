@@ -40,6 +40,7 @@ message MsgElement {
   string imageUrlLow = 45802;
   string imageUrlHigh = 45803;
   string imageUrlOrigin = 45804;
+  string imageSourcePath = 45812; // 图片本地缓存路径（仅 QQ 已缓存到本地时存在）
   string imageText = 45815;
 
   // 视频消息 (elementType == 5)

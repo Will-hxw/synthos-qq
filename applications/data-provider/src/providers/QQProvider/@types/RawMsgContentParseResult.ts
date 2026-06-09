@@ -94,6 +94,9 @@ export interface MsgElement {
     /** 原图 URL (imageUrlOrigin = 45804) */
     imageUrlOrigin: string;
 
+    /** 图片本地缓存路径 (imageSourcePath = 45812) */
+    imageSourcePath: string;
+
     /** 图片 OCR 或描述文本 (imageText = 45815) */
     imageText: string;
 

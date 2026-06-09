@@ -733,7 +733,11 @@ export class QQProvider extends Disposable implements IIMProvider {
     }
 
     private _resolveImageSourcePath(element: MsgElement): string {
-        return this._normalizeQQSourcePath(element.picThumbPath) || this._normalizeQQSourcePath(element.filePath);
+        return (
+            this._normalizeQQSourcePath(element.picThumbPath) ||
+            this._normalizeQQSourcePath(element.filePath) ||
+            this._normalizeQQSourcePath(element.imageSourcePath)
+        );
     }
 
     private _normalizeImageSourceUrl(imageUrl: string | null | undefined): string {

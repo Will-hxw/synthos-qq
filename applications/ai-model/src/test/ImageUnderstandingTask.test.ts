@@ -138,9 +138,9 @@ describe("ImageUnderstandingTaskHandler", () => {
             2000,
             ["image"]
         );
-        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("skipped=3"));
-        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("missingSource=3"));
-        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("failReasonSample=3"));
+        expect(mocks.mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("skipped=3"));
+        expect(mocks.mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("missingSource=3"));
+        expect(mocks.mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("failReasonSample=3"));
     });
 
     it("应只查询当前 pipeline 时间范围内的 pending 图片并写入理解结果", async () => {

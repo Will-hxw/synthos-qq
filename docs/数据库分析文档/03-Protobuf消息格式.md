@@ -41,10 +41,20 @@
 
 | Field Number | 类型 | 字段 | 说明 |
 |:---|:---|:---|:---|
+| `45402` | str | `fileName` | 图片文件名 |
+| `45405` | int | `fileSize` | 图片文件大小 |
 | `45411` | int | `picWidth` / `thumbWidth` | 原图/封面宽度 |
 | `45412` | int | `picHeight` / `thumbHeight` | 原图/封面高度 |
 | `45416` | int | `picType` | 图片类型：`1000` = 静态图，`2000` = GIF |
 | `45424` | str/bytes | `originImageMd5` | 原图 MD5 |
+| `45503` | str | `fileUuid` | CDN 下载 fileid |
+| `45802` | str | `imageUrlLow` | 低清图片下载地址，QQNT 中常见为 `/download?...` 相对地址 |
+| `45803` | str | `imageUrlHigh` | 高清图片下载地址，QQNT 中常见为 `/download?...` 相对地址 |
+| `45804` | str | `imageUrlOrigin` | 原图下载地址，QQNT 中常见为 `/download?...` 相对地址 |
+| `45812` | str | `imageSourcePath` | 图片本地缓存路径，仅当 QQ 已缓存到本地时存在 |
+| `45815` | str | `imageText` | QQ 自带图片文字或表情描述 |
+
+> 图片消息不保证存在本地缓存路径。实测 `45403` / `45954` 对图片通常为空，`45812` 在部分已缓存图片中保存 `nt_data/Pic/...` 或 `nt_data/Emoji/...` 路径；其余图片通常只能拿到 `/download?...` 下载地址。
 
 ### 2.4 文件消息（elementType=3, fileElement）
 

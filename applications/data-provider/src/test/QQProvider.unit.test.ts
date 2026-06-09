@@ -503,6 +503,55 @@ describe("QQProvider", () => {
             ]);
         });
 
+        it("图片 picThumbPath 和 filePath 为空但 imageSourcePath 存在时应保留本地缓存路径", async () => {
+            const mockRow = createMockDbRow();
+            const qqMediaRootPath = path.dirname(
+                path.dirname(path.dirname(path.resolve(mockConfig.dataProviders.QQ.dbBasePath)))
+            );
+            const absoluteImagePath = path.join(
+                qqMediaRootPath,
+                "1176843521",
+                "nt_qq",
+                "nt_data",
+                "Pic",
+                "2026-06",
+                "Ori",
+                "abc.jpg"
+            );
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.IMAGE,
+                        imageUrlOrigin: "/download?appid=1407&fileid=abc&spec=0",
+                        imageUrlHigh: "",
+                        imageUrlLow: "",
+                        picWidth: 640,
+                        picHeight: 480,
+                        picType: 1000,
+                        picThumbPath: "",
+                        filePath: "",
+                        imageSourcePath: absoluteImagePath,
+                        originImageMd5: "",
+                        imageText: ""
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].mediaItems).toEqual([
+                expect.objectContaining({
+                    mediaId: `${mockMsgId}:0`,
+                    sourceUrl: undefined,
+                    sourcePath: path.join("1176843521", "nt_qq", "nt_data", "Pic", "2026-06", "Ori", "abc.jpg")
+                })
+            ]);
+        });
+
         it("应正确处理语音消息", async () => {
             const mockRow = createMockDbRow();
             const qqMediaRootPath = path.dirname(
