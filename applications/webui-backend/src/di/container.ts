@@ -18,6 +18,7 @@ import { TopicFavoriteStatusManager } from "../repositories/TopicFavoriteStatusM
 import { TopicReadStatusManager } from "../repositories/TopicReadStatusManager";
 import { RagChatHistoryManager } from "../repositories/RagChatHistoryManager";
 import { ReportReadStatusManager } from "../repositories/ReportReadStatusManager";
+import { ReportFavoriteStatusManager } from "../repositories/ReportFavoriteStatusManager";
 import { AIDigestService } from "../services/AIDigestService";
 import { ChatMessageService } from "../services/ChatMessageService";
 import { ChatMessageFtsService } from "../services/ChatMessageFtsService";
@@ -80,11 +81,13 @@ export function registerDBManagers(
 export function registerStatusManagers(
     favoriteStatusManager: TopicFavoriteStatusManager,
     readStatusManager: TopicReadStatusManager,
-    reportReadStatusManager: ReportReadStatusManager
+    reportReadStatusManager: ReportReadStatusManager,
+    reportFavoriteStatusManager: ReportFavoriteStatusManager
 ): void {
     container.registerInstance(TOKENS.TopicFavoriteStatusManager, favoriteStatusManager);
     container.registerInstance(TOKENS.TopicReadStatusManager, readStatusManager);
     container.registerInstance(TOKENS.ReportReadStatusManager, reportReadStatusManager);
+    container.registerInstance(TOKENS.ReportFavoriteStatusManager, reportFavoriteStatusManager);
 }
 
 /**

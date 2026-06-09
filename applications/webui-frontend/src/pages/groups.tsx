@@ -323,25 +323,28 @@ export default function GroupsPage() {
         return renderDayOverDayChange(currentCount, previousCount);
     };
 
-    const chartFallback = <div aria-label="走势图加载中" className="h-[100px] w-[300px] rounded bg-default-100" />;
+    // 走势图列统一尺寸：宽度自适应列宽，min/max 约束防止过窄或过宽，使 ResizeObserver 真正生效
+    const trendChartBoxClass = "h-[100px] w-full min-w-[200px] max-w-[340px]";
 
     const renderTrendChart = (currentHourlyData: number[], previousHourlyData: number[]) => {
         if (isStatsLoading) {
-            return <div aria-label="统计加载中" className="h-[100px] w-[300px] rounded bg-default-200 animate-pulse" />;
+            return <div aria-label="统计加载中" className={`${trendChartBoxClass} rounded bg-default-200 animate-pulse`} />;
         }
 
         if (statsLoadFailed && !hasStatsData) {
-            return <div className="flex h-[100px] w-[300px] items-center justify-center rounded bg-default-100 text-xs text-default-400">统计加载失败</div>;
+            return <div className={`${trendChartBoxClass} flex items-center justify-center rounded bg-default-100 text-xs text-default-400`}>统计加载失败</div>;
         }
 
         if (!hasStatsData) {
-            return <div className="h-[100px] w-[300px] rounded bg-default-100" />;
+            return <div className={`${trendChartBoxClass} rounded bg-default-100`} />;
         }
 
         return (
-            <Suspense fallback={chartFallback}>
-                <MessageTrendChart currentHourlyData={currentHourlyData} previousHourlyData={previousHourlyData} timestamps={chartTimestamps} />
-            </Suspense>
+            <div className={trendChartBoxClass}>
+                <Suspense fallback={<div aria-label="走势图加载中" className="h-full w-full rounded bg-default-100" />}>
+                    <MessageTrendChart currentHourlyData={currentHourlyData} height="100%" previousHourlyData={previousHourlyData} timestamps={chartTimestamps} width="100%" />
+                </Suspense>
+            </div>
         );
     };
 
@@ -377,7 +380,7 @@ export default function GroupsPage() {
                                     <TableColumn key="platform" allowsSorting>
                                         平台
                                     </TableColumn>
-                                    <TableColumn key="groupIntroduction">群介绍</TableColumn>
+                                    <TableColumn key="groupName">群名称</TableColumn>
                                     <TableColumn key="splitStrategy" allowsSorting>
                                         分组策略
                                     </TableColumn>
@@ -438,7 +441,7 @@ export default function GroupsPage() {
                                                         {groupDetail.IM}
                                                     </Chip>
                                                 </TableCell>
-                                                <TableCell>{groupDetail.groupIntroduction}</TableCell>
+                                                <TableCell>{groupDetail.groupName?.trim() ? groupDetail.groupName : groupId}</TableCell>
                                                 <TableCell>
                                                     <Chip color={getSplitStrategyColor(groupDetail.splitStrategy)} variant="flat">
                                                         {getSplitStrategyLabel(groupDetail.splitStrategy)}

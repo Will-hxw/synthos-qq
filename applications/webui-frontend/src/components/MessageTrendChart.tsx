@@ -31,7 +31,7 @@ function buildOption(currentHourlyData: number[], previousHourlyData: number[], 
             data: timestamps.map(formatHour),
             axisLabel: { rotate: 45, fontSize: 10 }
         },
-        yAxis: { type: "value" as const },
+        yAxis: { type: "value" as const, axisLabel: { fontSize: 8 } },
         series: [
             {
                 name: "前一天",

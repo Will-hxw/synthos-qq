@@ -194,6 +194,7 @@ export class ReportDbAccessService extends Disposable {
      * 删除日报
      */
     public async deleteReport(reportId: string): Promise<void> {
+        this.LOGGER.debug(`执行 SQL 删除日报记录: reportId=${reportId}`);
         await this.db.run(`DELETE FROM reports WHERE reportId = ?`, [reportId]);
     }
 
@@ -208,28 +209,46 @@ export class ReportDbAccessService extends Disposable {
 
     /**
      * 分页获取日报列表
+     * @param favoriteReportIds 可选：仅返回这些 reportId 的日报（用于“只看收藏”筛选）。
+     *        传入空数组表示收藏集为空，结果必为空；传入 undefined 表示不按收藏过滤。
      */
     public async getReportsPaginated(
         page: number,
         pageSize: number,
-        type?: ReportType
+        type?: ReportType,
+        favoriteReportIds?: string[]
     ): Promise<{ reports: Report[]; total: number }> {
         const offset = (page - 1) * pageSize;
 
-        let countSql = `SELECT COUNT(*) as count FROM reports`;
-        let selectSql = `SELECT * FROM reports`;
-        const params: any[] = [];
+        // 收藏集为空时直接短路，避免生成 `IN ()` 的非法 SQL
+        if (favoriteReportIds && favoriteReportIds.length === 0) {
+            this.LOGGER.debug("收藏筛选集为空，跳过 SQL 查询直接返回空结果");
 
-        if (type) {
-            countSql += ` WHERE type = ?`;
-            selectSql += ` WHERE type = ?`;
-            params.push(type);
+            return { reports: [], total: 0 };
         }
 
-        selectSql += ` ORDER BY timeEnd DESC LIMIT ? OFFSET ?`;
+        const conditions: string[] = [];
+        const whereParams: any[] = [];
 
-        const countResult = await this.db.get<{ count: number }>(countSql, type ? [type] : []);
-        const records = await this.db.all<ReportDBRecord>(selectSql, [...params, pageSize, offset]);
+        if (type) {
+            conditions.push(`type = ?`);
+            whereParams.push(type);
+        }
+
+        if (favoriteReportIds) {
+            const placeholders = favoriteReportIds.map(() => `?`).join(", ");
+
+            conditions.push(`reportId IN (${placeholders})`);
+            whereParams.push(...favoriteReportIds);
+        }
+
+        const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+
+        const countSql = `SELECT COUNT(*) as count FROM reports${whereClause}`;
+        const selectSql = `SELECT * FROM reports${whereClause} ORDER BY timeEnd DESC LIMIT ? OFFSET ?`;
+
+        const countResult = await this.db.get<{ count: number }>(countSql, whereParams);
+        const records = await this.db.all<ReportDBRecord>(selectSql, [...whereParams, pageSize, offset]);
 
         return {
             reports: records.map(dbRecordToReport),

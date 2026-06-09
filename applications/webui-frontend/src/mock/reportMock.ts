@@ -361,11 +361,16 @@ export const mockGetReportById = async (reportId: string): Promise<ApiResponse<R
 /**
  * 模拟获取日报列表（分页）
  */
-export const mockGetReportsPaginated = async (page: number, pageSize: number, type?: ReportType): Promise<ApiResponse<ReportsPaginatedResponse>> => {
+export const mockGetReportsPaginated = async (page: number, pageSize: number, type?: ReportType, favoriteOnly?: boolean): Promise<ApiResponse<ReportsPaginatedResponse>> => {
     await delay(400 + Math.random() * 300);
 
     // 按类型过滤
     let filteredReports = type ? mockReports.filter(r => r.type === type) : mockReports;
+
+    // 仅看收藏
+    if (favoriteOnly) {
+        filteredReports = filteredReports.filter(r => mockFavoriteReports[r.reportId] === true);
+    }
 
     // 按时间倒序排序
     filteredReports = [...filteredReports].sort((a, b) => b.timeEnd - a.timeEnd);
@@ -578,6 +583,89 @@ export const mockSendReportEmail = async (reportId: string): Promise<ApiResponse
     return {
         success: true,
         data: { success: true, message: "日报邮件发送成功" },
+        message: ""
+    };
+};
+
+// ==================== 日报收藏模拟 ====================
+
+// 模拟的收藏状态存储
+const mockFavoriteReports: Record<string, boolean> = {};
+
+/**
+ * 模拟标记日报为收藏
+ */
+export const mockMarkReportAsFavorite = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    await delay(200 + Math.random() * 100);
+
+    mockFavoriteReports[reportId] = true;
+
+    return {
+        success: true,
+        data: { message: "日报已标记为收藏" },
+        message: ""
+    };
+};
+
+/**
+ * 模拟从收藏中移除日报
+ */
+export const mockRemoveReportFromFavorites = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    await delay(200 + Math.random() * 100);
+
+    delete mockFavoriteReports[reportId];
+
+    return {
+        success: true,
+        data: { message: "日报已从收藏中移除" },
+        message: ""
+    };
+};
+
+/**
+ * 模拟批量检查日报收藏状态
+ */
+export const mockGetReportsFavoriteStatus = async (reportIds: string[]): Promise<ApiResponse<{ favoriteStatus: Record<string, boolean> }>> => {
+    await delay(200 + Math.random() * 100);
+
+    const favoriteStatus: Record<string, boolean> = {};
+
+    for (const reportId of reportIds) {
+        favoriteStatus[reportId] = mockFavoriteReports[reportId] === true;
+    }
+
+    return {
+        success: true,
+        data: { favoriteStatus },
+        message: ""
+    };
+};
+
+// ==================== 日报删除模拟 ====================
+
+/**
+ * 模拟删除日报（物理删除，不可恢复）
+ */
+export const mockDeleteReport = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    await delay(300 + Math.random() * 200);
+
+    const index = mockReports.findIndex(r => r.reportId === reportId);
+
+    if (index === -1) {
+        return {
+            success: false,
+            data: { message: "未找到对应的日报" },
+            message: ""
+        };
+    }
+
+    mockReports.splice(index, 1);
+    delete mockReadReports[reportId];
+    delete mockFavoriteReports[reportId];
+
+    return {
+        success: true,
+        data: { message: "日报已删除" },
         message: ""
     };
 };

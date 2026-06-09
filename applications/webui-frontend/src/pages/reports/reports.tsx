@@ -1,19 +1,31 @@
 import type { TopicReferenceItem } from "@/types/topicReference";
 
-import { lazy, Suspense, useState, useEffect, useCallback } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Pagination } from "@heroui/pagination";
 import { Spinner } from "@heroui/spinner";
-import { Tabs, Tab, Chip, Calendar, Select, SelectItem } from "@heroui/react";
+import { Tabs, Tab, Chip, Calendar, Select, SelectItem, addToast, closeToast } from "@heroui/react";
 import { FileText, RefreshCw, Plus } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 
 import ReportCard from "./components/ReportCard";
 import { useTopicStatus } from "./hooks/useTopicStatus";
 
-import { getReportsPaginated, getReportsByDate, getReportById, triggerReportGenerate, markReportAsRead, getReportsReadStatus, sendReportEmail } from "@/api/reportApi";
+import {
+    getReportsPaginated,
+    getReportsByDate,
+    getReportById,
+    triggerReportGenerate,
+    markReportAsRead,
+    getReportsReadStatus,
+    sendReportEmail,
+    markReportAsFavorite,
+    removeReportFromFavorites,
+    getReportsFavoriteStatus,
+    deleteReport
+} from "@/api/reportApi";
 import { getCurrentConfig } from "@/api/configApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
@@ -32,6 +44,9 @@ export default function ReportsPage() {
     const [total, setTotal] = useState<number>(0);
     const [pageSize] = useState<number>(10);
     const [selectedType, setSelectedType] = useState<ReportType | "all">("all");
+
+    // 收藏筛选：all(全部) | favorite(仅收藏)
+    const [favoriteFilter, setFavoriteFilter] = useState<"all" | "favorite">("all");
 
     // 日历视图相关
     const [selectedDate, setSelectedDate] = useState<CalendarDate>(today(getLocalTimeZone()));
@@ -54,6 +69,12 @@ export default function ReportsPage() {
 
     // 已读状态
     const [readReports, setReadReports] = useState<Record<string, boolean>>({});
+
+    // 收藏状态
+    const [favoriteReports, setFavoriteReports] = useState<Record<string, boolean>>({});
+
+    // 待删除定时器（reportId -> timer），用于“延迟真删 + 可撤销”
+    const pendingDeletesRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
     // 邮件功能相关状态
     const [emailEnabled, setEmailEnabled] = useState<boolean>(false);
@@ -178,7 +199,8 @@ export default function ReportsPage() {
         setLoading(true);
         try {
             const type = selectedType === "all" ? undefined : selectedType;
-            const response = await getReportsPaginated(page, pageSize, type);
+            const favoriteOnly = favoriteFilter === "favorite";
+            const response = await getReportsPaginated(page, pageSize, type, favoriteOnly);
 
             if (response.success) {
                 setReports(response.data.reports);
@@ -198,7 +220,7 @@ export default function ReportsPage() {
         } finally {
             setLoading(false);
         }
-    }, [page, pageSize, selectedType]);
+    }, [page, pageSize, selectedType, favoriteFilter]);
 
     // 加载指定日期的日报
     const fetchReportsByDate = useCallback(async (date: CalendarDate) => {
@@ -300,6 +322,52 @@ export default function ReportsPage() {
         };
 
         initDateReadStatus();
+    }, [dateReports]);
+
+    // 初始化收藏状态（列表视图）
+    useEffect(() => {
+        const initFavoriteStatus = async () => {
+            if (reports.length === 0) return;
+
+            try {
+                const reportIds = reports.map(report => report.reportId);
+                const response = await getReportsFavoriteStatus(reportIds);
+
+                if (response.success) {
+                    setFavoriteReports(prev => ({
+                        ...prev,
+                        ...response.data.favoriteStatus
+                    }));
+                }
+            } catch (error) {
+                console.error("初始化日报收藏状态失败:", error);
+            }
+        };
+
+        initFavoriteStatus();
+    }, [reports]);
+
+    // 初始化收藏状态（日历视图）
+    useEffect(() => {
+        const initDateFavoriteStatus = async () => {
+            if (dateReports.length === 0) return;
+
+            try {
+                const reportIds = dateReports.map(report => report.reportId);
+                const response = await getReportsFavoriteStatus(reportIds);
+
+                if (response.success) {
+                    setFavoriteReports(prev => ({
+                        ...prev,
+                        ...response.data.favoriteStatus
+                    }));
+                }
+            } catch (error) {
+                console.error("初始化日报收藏状态失败:", error);
+            }
+        };
+
+        initDateFavoriteStatus();
     }, [dateReports]);
 
     // 打开详情弹窗（拉取 detail + references 用于高亮与 cardlist）
@@ -408,6 +476,175 @@ export default function ReportsPage() {
         }
     };
 
+    // 切换日报收藏状态
+    const handleToggleFavorite = async (reportId: string) => {
+        const isCurrentlyFavorite = favoriteReports[reportId] === true;
+
+        console.log(`[Reports] 切换收藏: reportId=${reportId}, ${isCurrentlyFavorite ? "取消收藏" : "加入收藏"}`);
+
+        // 乐观更新
+        setFavoriteReports(prev => ({
+            ...prev,
+            [reportId]: !isCurrentlyFavorite
+        }));
+
+        try {
+            if (isCurrentlyFavorite) {
+                await removeReportFromFavorites(reportId);
+                console.log(`[Reports] 取消收藏成功: reportId=${reportId}`);
+                Notification.success({
+                    title: "取消收藏",
+                    description: "日报已从收藏中移除"
+                });
+
+                // 当前处于“仅收藏”筛选时，取消收藏后从列表移除该卡片
+                if (favoriteFilter === "favorite") {
+                    console.log(`[Reports] 处于仅收藏筛选，从列表移除取消收藏的卡片: reportId=${reportId}`);
+                    setReports(prev => prev.filter(r => r.reportId !== reportId));
+                    setDateReports(prev => prev.filter(r => r.reportId !== reportId));
+                    setTotal(prev => Math.max(0, prev - 1));
+                }
+            } else {
+                await markReportAsFavorite(reportId);
+                console.log(`[Reports] 加入收藏成功: reportId=${reportId}`);
+                Notification.success({
+                    title: "收藏成功",
+                    description: "日报已添加到收藏"
+                });
+            }
+        } catch (error) {
+            console.error(`[Reports] 更新日报收藏状态失败: reportId=${reportId}`, error);
+            // 回滚
+            setFavoriteReports(prev => ({
+                ...prev,
+                [reportId]: isCurrentlyFavorite
+            }));
+            Notification.error({
+                title: "操作失败",
+                description: "无法更新日报收藏状态"
+            });
+        }
+    };
+
+    // 真正执行物理删除（撤销超时后由定时器触发）
+    const commitDeleteReport = useCallback(
+        async (reportId: string) => {
+            pendingDeletesRef.current.delete(reportId);
+            console.log(`[Reports] 撤销窗口结束，执行物理删除: reportId=${reportId}`);
+
+            try {
+                const response = await deleteReport(reportId);
+
+                if (response.success) {
+                    console.log(`[Reports] 物理删除成功: reportId=${reportId}`);
+                } else {
+                    console.warn(`[Reports] 物理删除返回失败: reportId=${reportId}, message=${response.data?.message}`);
+                    Notification.error({
+                        title: "删除失败",
+                        description: response.data?.message || "无法删除日报，请刷新后重试"
+                    });
+                    // 删除失败，重新拉取以恢复真实状态
+                    if (viewMode === "list") {
+                        fetchReports();
+                    } else {
+                        fetchReportsByDate(selectedDate);
+                    }
+                }
+            } catch (error) {
+                console.error(`[Reports] 物理删除请求异常: reportId=${reportId}`, error);
+                Notification.error({
+                    title: "删除失败",
+                    description: "无法删除日报，请刷新后重试"
+                });
+                if (viewMode === "list") {
+                    fetchReports();
+                } else {
+                    fetchReportsByDate(selectedDate);
+                }
+            }
+        },
+        [viewMode, fetchReports, fetchReportsByDate, selectedDate]
+    );
+
+    // 删除日报（乐观移除 + 5 秒可撤销，超时后物理删除）
+    const handleDeleteReport = (reportId: string) => {
+        console.log(`[Reports] 请求删除日报，进入 5 秒可撤销窗口: reportId=${reportId}`);
+
+        // 记录被删卡片的快照，用于撤销恢复
+        const removedFromList = reports.find(r => r.reportId === reportId);
+        const removedFromDate = dateReports.find(r => r.reportId === reportId);
+
+        // 乐观移除
+        setReports(prev => prev.filter(r => r.reportId !== reportId));
+        setDateReports(prev => prev.filter(r => r.reportId !== reportId));
+        setTotal(prev => Math.max(0, prev - 1));
+
+        const UNDO_TIMEOUT = 5000;
+        const toastKey = addToast({
+            title: "日报已删除",
+            description: "5 秒内可撤销",
+            color: "warning",
+            variant: "flat",
+            timeout: UNDO_TIMEOUT,
+            shouldShowTimeoutProgress: true,
+            endContent: (
+                <Button
+                    color="warning"
+                    size="sm"
+                    variant="flat"
+                    onPress={() => {
+                        console.log(`[Reports] 用户撤销删除，恢复卡片: reportId=${reportId}`);
+
+                        // 撤销：取消定时器并恢复卡片
+                        const timer = pendingDeletesRef.current.get(reportId);
+
+                        if (timer) {
+                            clearTimeout(timer);
+                            pendingDeletesRef.current.delete(reportId);
+                        }
+
+                        if (removedFromList) {
+                            setReports(prev => (prev.some(r => r.reportId === reportId) ? prev : [...prev, removedFromList].sort((a, b) => b.timeEnd - a.timeEnd)));
+                            setTotal(prev => prev + 1);
+                        }
+                        if (removedFromDate) {
+                            setDateReports(prev => (prev.some(r => r.reportId === reportId) ? prev : [...prev, removedFromDate].sort((a, b) => a.timeStart - b.timeStart)));
+                        }
+
+                        if (toastKey) {
+                            closeToast(toastKey);
+                        }
+                    }}
+                >
+                    撤销
+                </Button>
+            )
+        });
+
+        // 启动 5 秒后真删的定时器
+        const timer = setTimeout(() => {
+            void commitDeleteReport(reportId);
+        }, UNDO_TIMEOUT);
+
+        pendingDeletesRef.current.set(reportId, timer);
+    };
+
+    // 卸载时清理未触发的删除定时器（直接落库删除，避免遗留）
+    useEffect(() => {
+        const pending = pendingDeletesRef.current;
+
+        return () => {
+            if (pending.size > 0) {
+                console.log(`[Reports] 页面卸载，立即提交 ${pending.size} 个待删除日报`);
+            }
+            pending.forEach((timer, reportId) => {
+                clearTimeout(timer);
+                void deleteReport(reportId);
+            });
+            pending.clear();
+        };
+    }, []);
+
     // 手动生成日报
     const handleGenerateReport = async () => {
         setGenerating(true);
@@ -494,6 +731,22 @@ export default function ReportsPage() {
                                 </Tabs>
                             )}
 
+                            {/* 收藏筛选（仅列表视图） */}
+                            {viewMode === "list" && (
+                                <Tabs
+                                    aria-label="收藏筛选"
+                                    selectedKey={favoriteFilter}
+                                    size="sm"
+                                    onSelectionChange={key => {
+                                        setFavoriteFilter(key as "all" | "favorite");
+                                        setPage(1);
+                                    }}
+                                >
+                                    <Tab key="all" title="全部" />
+                                    <Tab key="favorite" title="收藏" />
+                                </Tabs>
+                            )}
+
                             {/* 刷新按钮 */}
                             <Button
                                 color="primary"
@@ -552,12 +805,15 @@ export default function ReportsPage() {
                                             <ReportCard
                                                 key={report.reportId}
                                                 emailEnabled={emailEnabled}
+                                                favoriteReports={favoriteReports}
                                                 readReports={readReports}
                                                 report={report}
                                                 sendingEmailReportId={sendingEmailReportId}
                                                 onClick={() => void openReportDetail(report)}
+                                                onDelete={handleDeleteReport}
                                                 onMarkAsRead={handleMarkAsRead}
                                                 onSendEmail={handleSendEmail}
+                                                onToggleFavorite={handleToggleFavorite}
                                             />
                                         ))}
                                     </div>
@@ -604,12 +860,15 @@ export default function ReportsPage() {
                                                 <ReportCard
                                                     key={report.reportId}
                                                     emailEnabled={emailEnabled}
+                                                    favoriteReports={favoriteReports}
                                                     readReports={readReports}
                                                     report={report}
                                                     sendingEmailReportId={sendingEmailReportId}
                                                     onClick={() => void openReportDetail(report)}
+                                                    onDelete={handleDeleteReport}
                                                     onMarkAsRead={handleMarkAsRead}
                                                     onSendEmail={handleSendEmail}
+                                                    onToggleFavorite={handleToggleFavorite}
                                                 />
                                             ))}
                                         </div>

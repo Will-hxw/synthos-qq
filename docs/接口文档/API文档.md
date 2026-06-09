@@ -629,8 +629,10 @@ type Report = {
 Body：
 
 ```ts
-{ page: number; pageSize: number; type?: "half-daily" | "weekly" | "monthly" }
+{ page: number; pageSize: number; type?: "half-daily" | "weekly" | "monthly"; favoriteOnly?: boolean }
 ```
+
+说明：`favoriteOnly` 为 `true` 时仅返回已收藏的日报。
 
 响应 `data`：
 
@@ -703,6 +705,36 @@ Body：`{ reportId: string }`
 ```ts
 { success: boolean; data: { success: boolean; message: string } }
 ```
+
+### POST /api/report/favorite/mark
+
+Body：`{ reportId: string }`
+
+响应：`{ "success": true, "message": "日报已标记为收藏" }`
+
+### POST /api/report/favorite/remove
+
+Body：`{ reportId: string }`
+
+响应：`{ "success": true, "message": "日报已从收藏中移除" }`
+
+### POST /api/report/favorite/status
+
+Body：`{ reportIds: string[] }`
+
+响应：
+
+```json
+{ "success": true, "data": { "favoriteStatus": { "<reportId>": true } } }
+```
+
+### POST /api/report/delete
+
+Body：`{ reportId: string }`
+
+说明：物理删除日报（不可恢复），同时清理该日报的已读与收藏状态。日报不存在时返回 404。
+
+响应：`{ "success": true, "message": "日报已删除" }`
 
 ---
 

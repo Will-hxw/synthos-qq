@@ -15,7 +15,11 @@ import {
     mockMarkReportAsRead,
     mockUnmarkReportAsRead,
     mockGetReportsReadStatus,
-    mockSendReportEmail
+    mockSendReportEmail,
+    mockMarkReportAsFavorite,
+    mockRemoveReportFromFavorites,
+    mockGetReportsFavoriteStatus,
+    mockDeleteReport
 } from "@/mock/reportMock";
 
 /**
@@ -35,16 +39,16 @@ export const getReportById = async (reportId: string): Promise<ApiResponse<Repor
 /**
  * 获取日报列表（分页）
  */
-export const getReportsPaginated = async (page: number, pageSize: number, type?: ReportType): Promise<ApiResponse<ReportsPaginatedResponse>> => {
+export const getReportsPaginated = async (page: number, pageSize: number, type?: ReportType, favoriteOnly?: boolean): Promise<ApiResponse<ReportsPaginatedResponse>> => {
     // 如果启用了 mock，使用 mock 数据
     if (mockConfig.report) {
-        return mockGetReportsPaginated(page, pageSize, type);
+        return mockGetReportsPaginated(page, pageSize, type, favoriteOnly);
     }
 
     const response = await fetchWrapper(`${API_BASE_URL}/api/reports`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page, pageSize, type })
+        body: JSON.stringify({ page, pageSize, type, favoriteOnly })
     });
 
     return response.json();
@@ -190,6 +194,79 @@ export const sendReportEmail = async (reportId: string): Promise<ApiResponse<Sen
     }
 
     const response = await fetchWrapper(`${API_BASE_URL}/api/report/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId })
+    });
+
+    return response.json();
+};
+
+// ==================== 日报收藏状态 ====================
+
+/**
+ * 标记日报为收藏
+ */
+export const markReportAsFavorite = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    if (mockConfig.report) {
+        return mockMarkReportAsFavorite(reportId);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/report/favorite/mark`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId })
+    });
+
+    return response.json();
+};
+
+/**
+ * 从收藏中移除日报
+ */
+export const removeReportFromFavorites = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    if (mockConfig.report) {
+        return mockRemoveReportFromFavorites(reportId);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/report/favorite/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId })
+    });
+
+    return response.json();
+};
+
+/**
+ * 批量检查日报收藏状态
+ */
+export const getReportsFavoriteStatus = async (reportIds: string[]): Promise<ApiResponse<{ favoriteStatus: Record<string, boolean> }>> => {
+    if (mockConfig.report) {
+        return mockGetReportsFavoriteStatus(reportIds);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/report/favorite/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportIds })
+    });
+
+    return response.json();
+};
+
+// ==================== 日报删除 ====================
+
+/**
+ * 删除日报（物理删除，不可恢复）
+ * @param reportId 日报 ID
+ */
+export const deleteReport = async (reportId: string): Promise<ApiResponse<{ message: string }>> => {
+    if (mockConfig.report) {
+        return mockDeleteReport(reportId);
+    }
+
+    const response = await fetchWrapper(`${API_BASE_URL}/api/report/delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reportId })

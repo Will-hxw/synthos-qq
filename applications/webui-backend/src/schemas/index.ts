@@ -238,7 +238,8 @@ export type GetReportByIdParams = z.infer<typeof GetReportByIdSchema>;
 export const GetReportsPaginatedSchema = z.object({
     page: z.number({ message: "缺少page参数" }).int().positive(),
     pageSize: z.number({ message: "缺少pageSize参数" }).int().positive().max(50),
-    type: z.enum(["half-daily", "weekly", "monthly"]).optional()
+    type: z.enum(["half-daily", "weekly", "monthly"]).optional(),
+    favoriteOnly: z.boolean().optional()
 });
 export type GetReportsPaginatedParams = z.infer<typeof GetReportsPaginatedSchema>;
 

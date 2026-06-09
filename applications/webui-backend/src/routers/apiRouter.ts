@@ -282,6 +282,28 @@ export const setupApiRoutes = (app: Express): void => {
         asyncHandler((req, res) => reportController.sendReportEmail(req, res))
     );
 
+    // 日报收藏状态管理
+    app.post(
+        "/api/report/favorite/mark",
+        asyncHandler((req, res) => reportController.markAsFavorite(req, res))
+    );
+
+    app.post(
+        "/api/report/favorite/remove",
+        asyncHandler((req, res) => reportController.removeFromFavorites(req, res))
+    );
+
+    app.post(
+        "/api/report/favorite/status",
+        asyncHandler((req, res) => reportController.checkFavoriteStatus(req, res))
+    );
+
+    // 删除日报（物理删除）
+    app.post(
+        "/api/report/delete",
+        asyncHandler((req, res) => reportController.deleteReport(req, res))
+    );
+
     // ==================== 系统监控 ====================
     app.get(
         "/api/system/monitor/latest",

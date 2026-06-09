@@ -38,7 +38,12 @@ export class ReportController {
      */
     public async getReportsPaginated(req: Request, res: Response): Promise<void> {
         const params = GetReportsPaginatedSchema.parse(req.body);
-        const result = await this.reportService.getReportsPaginated(params.page, params.pageSize, params.type);
+        const result = await this.reportService.getReportsPaginated(
+            params.page,
+            params.pageSize,
+            params.type,
+            params.favoriteOnly
+        );
 
         res.json({ success: true, data: result });
     }
@@ -136,5 +141,53 @@ export class ReportController {
         const result = await this.reportService.sendReportEmail(params.reportId);
 
         res.json({ success: result.success, data: result });
+    }
+
+    // ==================== 收藏相关 ====================
+
+    /**
+     * POST /api/report/favorite/mark
+     * 标记日报为收藏
+     */
+    public async markAsFavorite(req: Request, res: Response): Promise<void> {
+        const params = ReportIdSchema.parse(req.body);
+
+        await this.reportService.markAsFavorite(params.reportId);
+        res.json({ success: true, message: "日报已标记为收藏" });
+    }
+
+    /**
+     * POST /api/report/favorite/remove
+     * 从收藏中移除日报
+     */
+    public async removeFromFavorites(req: Request, res: Response): Promise<void> {
+        const params = ReportIdSchema.parse(req.body);
+
+        await this.reportService.removeFromFavorites(params.reportId);
+        res.json({ success: true, message: "日报已从收藏中移除" });
+    }
+
+    /**
+     * POST /api/report/favorite/status
+     * 批量检查日报收藏状态
+     */
+    public async checkFavoriteStatus(req: Request, res: Response): Promise<void> {
+        const params = ReportIdsSchema.parse(req.body);
+        const favoriteStatus = await this.reportService.checkFavoriteStatus(params.reportIds);
+
+        res.json({ success: true, data: { favoriteStatus } });
+    }
+
+    // ==================== 删除相关 ====================
+
+    /**
+     * POST /api/report/delete
+     * 删除日报（物理删除，不可恢复）
+     */
+    public async deleteReport(req: Request, res: Response): Promise<void> {
+        const params = ReportIdSchema.parse(req.body);
+
+        await this.reportService.deleteReport(params.reportId);
+        res.json({ success: true, message: "日报已删除" });
     }
 }

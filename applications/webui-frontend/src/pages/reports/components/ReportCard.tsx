@@ -1,6 +1,6 @@
 import { Card, CardBody, Chip, Tooltip } from "@heroui/react";
 import { Button as HeroUIButton } from "@heroui/button";
-import { FileText, Clock, Users, TrendingUp, AlertCircle, CheckCircle2, Check, Mail } from "lucide-react";
+import { FileText, Clock, Users, TrendingUp, AlertCircle, CheckCircle2, Check, Mail, Star, Trash2 } from "lucide-react";
 
 import { Report, ReportType } from "@/types";
 
@@ -19,9 +19,26 @@ interface ReportCardProps {
     emailEnabled?: boolean;
     /** 正在发送邮件的 reportId */
     sendingEmailReportId?: string | null;
+    /** 收藏状态映射表 */
+    favoriteReports?: Record<string, boolean>;
+    /** 切换收藏状态的回调 */
+    onToggleFavorite?: (reportId: string) => void;
+    /** 删除日报的回调 */
+    onDelete?: (reportId: string) => void;
 }
 
-export default function ReportCard({ report, onClick, readReports = {}, onMarkAsRead, onSendEmail, emailEnabled = false, sendingEmailReportId }: ReportCardProps) {
+export default function ReportCard({
+    report,
+    onClick,
+    readReports = {},
+    onMarkAsRead,
+    onSendEmail,
+    emailEnabled = false,
+    sendingEmailReportId,
+    favoriteReports = {},
+    onToggleFavorite,
+    onDelete
+}: ReportCardProps) {
     // 格式化时间段
     const formatPeriod = (timeStart: number, timeEnd: number): string => {
         const start = new Date(timeStart);
@@ -63,6 +80,7 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
     const typeConfig = getTypeConfig(report.type);
     const statusConfig = getStatusConfig(report.summaryStatus);
     const isRead = readReports[report.reportId] === true;
+    const isFavorite = favoriteReports[report.reportId] === true;
     const visibleActiveGroups = report.statistics.mostActiveGroups.filter(group => {
         const normalizedGroup = group.trim().toLowerCase();
 
@@ -82,6 +100,22 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
         e.stopPropagation();
         if (onSendEmail) {
             onSendEmail(report.reportId);
+        }
+    };
+
+    // 处理收藏按钮点击，阻止事件冒泡
+    const handleToggleFavoriteClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onToggleFavorite) {
+            onToggleFavorite(report.reportId);
+        }
+    };
+
+    // 处理删除按钮点击，阻止事件冒泡
+    const handleDeleteClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onDelete) {
+            onDelete(report.reportId);
         }
     };
 
@@ -151,11 +185,29 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
                             </Tooltip>
                         )}
 
+                        {/* 收藏按钮：收藏后高亮显示 */}
+                        {onToggleFavorite && (
+                            <Tooltip color="warning" content={isFavorite ? "取消收藏" : "收藏"} placement="top">
+                                <HeroUIButton isIconOnly color="warning" size="sm" variant={isFavorite ? "solid" : "flat"} onClick={handleToggleFavoriteClick}>
+                                    <Star fill={isFavorite ? "currentColor" : "none"} size={16} />
+                                </HeroUIButton>
+                            </Tooltip>
+                        )}
+
                         {/* 已读按钮：只在未读时显示 */}
                         {onMarkAsRead && !isRead && (
                             <Tooltip color="primary" content="标记为已读" placement="top">
                                 <HeroUIButton isIconOnly color="primary" size="sm" variant="flat" onClick={handleMarkAsReadClick}>
                                     <Check size={16} />
+                                </HeroUIButton>
+                            </Tooltip>
+                        )}
+
+                        {/* 删除按钮：物理删除，附可撤销提示 */}
+                        {onDelete && (
+                            <Tooltip color="danger" content="删除" placement="top">
+                                <HeroUIButton isIconOnly color="danger" size="sm" variant="flat" onClick={handleDeleteClick}>
+                                    <Trash2 size={16} />
                                 </HeroUIButton>
                             </Tooltip>
                         )}
