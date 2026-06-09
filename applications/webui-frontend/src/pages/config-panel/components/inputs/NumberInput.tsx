@@ -10,16 +10,21 @@ import { Input } from "@heroui/input";
  * 数字类型配置项的输入组件
  */
 const NumberInput: React.FC<NumberInputProps> = ({ label, labelNode, path, value, description, min, max, onChange, error }) => {
-    const [inputValue, setInputValue] = useState(value.toString());
+    const [inputValue, setInputValue] = useState(value === undefined ? "" : value.toString());
 
     useEffect(() => {
-        setInputValue(value.toString());
+        setInputValue(value === undefined ? "" : value.toString());
     }, [value]);
 
     const handleChange = (nextValue: string) => {
         setInputValue(nextValue);
 
         if (nextValue === "") {
+            // 清空输入框时同步清空 config 中的值，保持「所见即所存」。
+            // 置为 undefined 会触发后端必填/类型校验报错并禁用保存，
+            // 避免界面显示为空却静默保存旧值。
+            onChange(path, undefined);
+
             return;
         }
 

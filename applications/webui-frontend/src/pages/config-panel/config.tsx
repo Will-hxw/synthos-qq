@@ -6,7 +6,7 @@
 import type { JsonSchema } from "@/api/configApi";
 import type { SectionConfig, SearchContext, ValidationError } from "./types/index";
 
-import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Button } from "@heroui/button";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/react";
 import { useTheme } from "@heroui/use-theme";
@@ -16,10 +16,10 @@ import { Chip } from "@heroui/chip";
 import { Save, RotateCcw, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { DEFAULT_SECTION_ICON, PREFERRED_SECTION_ORDER, SECTION_ICON_MAP } from "./constants/index";
-import { setNestedValue, collectAllExpandablePaths, getParentPaths, doesSchemaHaveMatchingFields } from "./utils/index";
+import { setNestedValue, collectAllExpandablePaths, collectSearchExpandedPaths, doesSchemaHaveMatchingFields } from "./utils/index";
 import { ConfigSidebar, SchemaForm } from "./components/index";
 
-import { getConfigSchema, getCurrentConfig, saveBaseConfig, validateConfig } from "@/api/configApi";
+import { getConfigSchema, getBaseConfig, saveBaseConfig, validateConfig } from "@/api/configApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
@@ -185,6 +185,10 @@ export default function ConfigPage() {
     const [errors, setErrors] = useState<ValidationError[]>([]);
     const [, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
 
+    // 配置校验：防抖定时器 + 请求序号（用于丢弃过期响应，避免竞态）
+    const validateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const validateSeqRef = useRef(0);
+
     const [activeSection, setActiveSection] = useState<string>("");
     const [isScrolling, setIsScrolling] = useState(false);
 
@@ -280,32 +284,39 @@ export default function ConfigPage() {
     }, []);
 
     /**
-     * 搜索关键词变化时，自动展开匹配字段的父级
+     * 搜索关键词变化时，自动展开包含匹配字段的所有容器
+     *
+     * 展开依据与可见性判定（doesSchemaHaveMatchingFields）保持一致：
+     * 命中由 label / description / 路径决定，确保命中的叶子字段不会因父级折叠而被隐藏。
      */
     const handleSearchQueryChange = useCallback(
         (query: string) => {
             setSearchQuery(query);
 
-            // 如果有搜索词，自动展开所有匹配路径的父级
-            if (query.trim()) {
-                const newExpandedKeys = new Set<string>();
-                const lowerQuery = query.toLowerCase();
-
-                for (const path of allExpandablePaths) {
-                    // 如果路径包含搜索词，展开其所有父路径
-                    if (path.toLowerCase().includes(lowerQuery)) {
-                        const parentPaths = getParentPaths(path);
-
-                        for (const p of parentPaths) {
-                            newExpandedKeys.add(p);
-                        }
-                    }
-                }
-
-                setExpandedKeys(newExpandedKeys);
+            if (!query.trim() || !schema) {
+                return;
             }
+
+            const rootSchema = unwrapRootSchema(schema);
+
+            if (!rootSchema.properties) {
+                return;
+            }
+
+            const newExpandedKeys = new Set<string>();
+
+            for (const [sectionKey, sectionSchema] of Object.entries(rootSchema.properties)) {
+                const sectionValue = config[sectionKey];
+                const expandPaths = collectSearchExpandedPaths(sectionSchema, sectionKey, sectionValue, query);
+
+                for (const p of expandPaths) {
+                    newExpandedKeys.add(p);
+                }
+            }
+
+            setExpandedKeys(newExpandedKeys);
         },
-        [allExpandablePaths]
+        [config, schema]
     );
 
     // 加载配置 + schema
@@ -314,7 +325,7 @@ export default function ConfigPage() {
         setLoadError(null);
 
         try {
-            const [schemaResponse, configResponse] = await Promise.all([getConfigSchema(), getCurrentConfig()]);
+            const [schemaResponse, configResponse] = await Promise.all([getConfigSchema(), getBaseConfig()]);
             let nextLoadError: LoadErrorState | null = null;
 
             if (schemaResponse.success) {
@@ -418,21 +429,47 @@ export default function ConfigPage() {
         };
     }, [isScrolling, sections]);
 
-    // 验证配置（防抖）
-    const validateConfigDebounced = useCallback(async (newConfig: Record<string, unknown>) => {
-        try {
-            const response = await validateConfig(newConfig, false);
-
-            if (response.success) {
-                if (response.data.valid) {
-                    setErrors([]);
-                } else {
-                    setErrors(normalizeValidationErrors(response.data.errors));
-                }
-            }
-        } catch (error) {
-            console.error("验证配置失败:", error);
+    // 验证配置（防抖 + 竞态保护）
+    const validateConfigDebounced = useCallback((newConfig: Record<string, unknown>) => {
+        if (validateTimerRef.current) {
+            clearTimeout(validateTimerRef.current);
         }
+
+        validateTimerRef.current = setTimeout(async () => {
+            // 为本次请求分配序号；仅当它仍是最新请求时才允许写入结果
+            const seq = ++validateSeqRef.current;
+
+            try {
+                const response = await validateConfig(newConfig, false);
+
+                // 过期响应（已有更新的请求发出）直接丢弃
+                if (seq !== validateSeqRef.current) {
+                    return;
+                }
+
+                if (response.success) {
+                    if (response.data.valid) {
+                        setErrors([]);
+                    } else {
+                        setErrors(normalizeValidationErrors(response.data.errors));
+                    }
+                }
+            } catch (error) {
+                if (seq !== validateSeqRef.current) {
+                    return;
+                }
+                console.error("验证配置失败:", error);
+            }
+        }, 300);
+    }, []);
+
+    // 卸载时清理待执行的校验定时器
+    useEffect(() => {
+        return () => {
+            if (validateTimerRef.current) {
+                clearTimeout(validateTimerRef.current);
+            }
+        };
     }, []);
 
     // 字段变更处理
@@ -488,8 +525,8 @@ export default function ConfigPage() {
 
         setIsSaving(true);
         try {
-            // 获取当前服务器端的最新配置，用于对比
-            const response = await getCurrentConfig();
+            // 获取当前服务器端的基础配置，用于对比（与保存目标 base 保持一致）
+            const response = await getBaseConfig();
 
             if (response.success) {
                 const currentServerConfig = response.data;
@@ -631,7 +668,9 @@ export default function ConfigPage() {
             <section className="flex flex-col gap-4 px-3 py-6 sm:px-0 md:py-10">
                 <div className="flex flex-col items-center justify-center gap-4">
                     <h1 className={title()}>配置面板</h1>
-                    <p className="text-default-600 max-w-2xl text-center">可视化编辑系统配置，所有更改将保存到 override 配置文件</p>
+                    <p className="text-default-600 max-w-2xl text-center">
+                        可视化编辑系统基础配置（Base Config），所有更改将保存到基础配置文件 synthos_config.json。 若存在 override 配置文件，运行时其同名字段仍会覆盖此处的设置。
+                    </p>
                 </div>
 
                 {/* 操作栏 */}
@@ -685,7 +724,7 @@ export default function ConfigPage() {
                                     </Button>
                                 </div>
                                 <p className="text-sm font-normal text-default-500">
-                                    请仔细核对以下更改。左侧为当前运行的配置，右侧为您即将保存的新配置。 确认无误后点击“确认保存”以更新基础配置文件（Base Config）。
+                                    请仔细核对以下更改。左侧为当前的基础配置，右侧为您即将保存的新配置。 确认无误后点击“确认保存”以更新基础配置文件（Base Config）。
                                 </p>
                             </ModalHeader>
                             <ModalBody>

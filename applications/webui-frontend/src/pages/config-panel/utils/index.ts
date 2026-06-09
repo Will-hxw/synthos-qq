@@ -334,3 +334,82 @@ export const getParentPaths = (path: string): string[] => {
 
     return paths;
 };
+
+/**
+ * 递归收集搜索命中后需要展开的容器路径。
+ *
+ * 与可见性判定（doesSchemaHaveMatchingFields / doesFieldOrChildrenMatch）使用一致的匹配语义：
+ * 字段是否命中由 label / description / 路径三者决定。
+ *
+ * 返回所有「自身或后代存在命中」的容器路径，调用方据此展开对应 Accordion，
+ * 确保「搜索得到的字段一定可见」，避免叶子字段命中却被折叠隐藏。
+ *
+ * @returns 需要展开的容器路径集合（包含中间层级与命中所在的容器层级）
+ */
+export const collectSearchExpandedPaths = (schema: JsonSchema, basePath: string, value: unknown, query: string): string[] => {
+    const result: string[] = [];
+
+    if (!query.trim()) {
+        return result;
+    }
+
+    const lowerQuery = query.toLowerCase();
+
+    /**
+     * 深度遍历，返回「当前节点自身或其后代是否存在命中」。
+     * 若某容器存在命中的后代，则将该容器路径加入展开集合。
+     */
+    const walk = (currentSchema: JsonSchema, path: string, currentValue: unknown): boolean => {
+        const fieldKey = path.split(".").slice(-1)[0];
+        const label = extractLabelFromSchema(currentSchema, fieldKey);
+        const selfMatch = isFieldMatchingSearch(query, label, currentSchema.description, path);
+
+        let descendantMatch = false;
+
+        const isObjectLike = currentSchema.type === "object" || currentSchema.properties || currentSchema.additionalProperties;
+
+        if (isObjectLike) {
+            // Record（additionalProperties）类型：遍历已有的键值对
+            if (currentSchema.additionalProperties && typeof currentSchema.additionalProperties === "object") {
+                if (currentValue && typeof currentValue === "object" && !Array.isArray(currentValue)) {
+                    const recordValue = currentValue as Record<string, unknown>;
+
+                    for (const [key, itemValue] of Object.entries(recordValue)) {
+                        const itemPath = `${path}.${key}`;
+                        // key 自身命中也视为该项命中，使其容器展开
+                        const keyMatch = key.toLowerCase().includes(lowerQuery);
+                        const childMatch = walk(currentSchema.additionalProperties as JsonSchema, itemPath, itemValue);
+
+                        if (keyMatch || childMatch) {
+                            descendantMatch = true;
+                        }
+                    }
+                }
+            }
+
+            // properties 类型：遍历每个属性
+            if (currentSchema.properties) {
+                const objValue = currentValue && typeof currentValue === "object" && !Array.isArray(currentValue) ? (currentValue as Record<string, unknown>) : {};
+
+                for (const [key, propSchema] of Object.entries(currentSchema.properties)) {
+                    const propPath = `${path}.${key}`;
+
+                    if (walk(propSchema, propPath, objValue[key])) {
+                        descendantMatch = true;
+                    }
+                }
+            }
+        }
+
+        // 当前容器存在命中的后代 → 需要展开当前容器
+        if (descendantMatch) {
+            result.push(path);
+        }
+
+        return selfMatch || descendantMatch;
+    };
+
+    walk(schema, basePath, value);
+
+    return result;
+};

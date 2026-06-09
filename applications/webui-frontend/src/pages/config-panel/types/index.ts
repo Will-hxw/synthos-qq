@@ -46,11 +46,13 @@ export interface NumberInputProps {
     /** 可选的 React 节点形式的标签，用于显示高亮文本 */
     labelNode?: React.ReactNode;
     path: string;
-    value: number;
+    /** 数值；清空输入框后为 undefined */
+    value?: number;
     description?: string;
     min?: number;
     max?: number;
-    onChange: (path: string, value: number) => void;
+    /** 清空输入框时会传入 undefined，以同步清空配置值 */
+    onChange: (path: string, value: number | undefined) => void;
     error?: string;
 }
 

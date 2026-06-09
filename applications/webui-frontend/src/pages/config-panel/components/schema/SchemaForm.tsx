@@ -596,7 +596,7 @@ const SchemaForm: React.FC<SchemaFormProps> = ({ path, rootValue, schema, errors
     }
 
     if (schemaType === "number" || schemaType === "integer") {
-        const fieldValue = typeof rootValue === "number" ? rootValue : 0;
+        const fieldValue = typeof rootValue === "number" ? rootValue : undefined;
 
         return (
             <NumberInput
