@@ -64,6 +64,7 @@ describe("ImageUnderstandingTaskHandler", () => {
     };
     const mockImDbAccessService = {
         getPendingImageMediaByGroupIdsAndTimeRange: vi.fn(),
+        getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange: vi.fn(),
         updateChatMessageMediaUnderstanding: vi.fn()
     };
 
@@ -72,6 +73,7 @@ describe("ImageUnderstandingTaskHandler", () => {
         vi.unstubAllGlobals();
         mockConfigManagerService.getCurrentConfig.mockResolvedValue(createConfig());
         mockImDbAccessService.getPendingImageMediaByGroupIdsAndTimeRange.mockResolvedValue([]);
+        mockImDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange.mockResolvedValue([]);
         mockImDbAccessService.updateChatMessageMediaUnderstanding.mockResolvedValue(undefined);
         mocks.mockParseImageUrl.mockResolvedValue({
             text: "",
@@ -107,6 +109,38 @@ describe("ImageUnderstandingTaskHandler", () => {
 
         expect(mockImDbAccessService.getPendingImageMediaByGroupIdsAndTimeRange).not.toHaveBeenCalled();
         expect(mockImDbAccessService.updateChatMessageMediaUnderstanding).not.toHaveBeenCalled();
+    });
+
+    it("没有 pending 图片时应输出媒体处理诊断统计", async () => {
+        mockImDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange.mockResolvedValue([
+            {
+                mediaType: "image",
+                status: "skipped",
+                count: 3,
+                latestUpdatedAt: 2000,
+                failReasonSampleCount: 3,
+                sourceUrlCount: 0,
+                sourcePathCount: 0,
+                missingSourceCount: 3
+            }
+        ]);
+        const handler = new ImageUnderstandingTaskHandler(
+            mockConfigManagerService as any,
+            mockImDbAccessService as any
+        );
+
+        await handler.register();
+        await runRegisteredTask();
+
+        expect(mockImDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange).toHaveBeenCalledWith(
+            ["group-a"],
+            1000,
+            2000,
+            ["image"]
+        );
+        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("skipped=3"));
+        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("missingSource=3"));
+        expect(mocks.mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("failReasonSample=3"));
     });
 
     it("应只查询当前 pipeline 时间范围内的 pending 图片并写入理解结果", async () => {

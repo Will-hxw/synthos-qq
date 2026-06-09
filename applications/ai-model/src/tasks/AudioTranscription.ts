@@ -7,7 +7,11 @@ import { agendaInstance } from "@root/common/scheduler/agenda";
 import Logger from "@root/common/util/Logger";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
-import { ImDbAccessService, PendingChatMessageMedia } from "@root/common/services/database/ImDbAccessService";
+import {
+    ImDbAccessService,
+    MediaProcessingMediaSummaryRow,
+    PendingChatMessageMedia
+} from "@root/common/services/database/ImDbAccessService";
 import { GlobalConfig } from "@root/common/services/config/schemas/GlobalConfig";
 import { RawChatMessage } from "@root/common/contracts/data-provider/index";
 import { formatMsg } from "@root/common/util/chat/formatMsg";
@@ -53,56 +57,61 @@ export class AudioTranscriptionTaskHandler {
             async job => {
                 this.LOGGER.info(`开始处理任务: ${job.attrs.name}`);
                 const attrs = job.attrs.data;
-                const config = await this.configManagerService.getCurrentConfig();
-                const audioTranscriptionConfig = config.ai.audioTranscription;
 
-                this.LOGGER.info(
-                    `语音转文字任务参数：groupCount=${attrs.groupIds.length}，timeStart=${attrs.startTimeStamp}，timeEnd=${attrs.endTimeStamp}`
-                );
-                this.LOGGER.info(
-                    `语音转文字配置：enabled=${audioTranscriptionConfig.enabled}，baseURL=${audioTranscriptionConfig.baseURL}，model=${audioTranscriptionConfig.model}，language=${audioTranscriptionConfig.language}，batchSize=${audioTranscriptionConfig.batchSize}，maxRetryCount=${audioTranscriptionConfig.maxRetryCount}，requestTimeoutMs=${audioTranscriptionConfig.requestTimeoutMs}，maxAudioBase64Bytes=${audioTranscriptionConfig.maxAudioBase64Bytes}`
-                );
+                try {
+                    const config = await this.configManagerService.getCurrentConfig();
+                    const audioTranscriptionConfig = config.ai.audioTranscription;
 
-                if (!audioTranscriptionConfig.enabled) {
-                    this.LOGGER.info("语音转文字未启用，跳过当前任务");
+                    this.LOGGER.info(
+                        `语音转文字任务参数：groupCount=${attrs.groupIds.length}，timeStart=${attrs.startTimeStamp}，timeEnd=${attrs.endTimeStamp}`
+                    );
+                    this.LOGGER.info(
+                        `语音转文字配置：enabled=${audioTranscriptionConfig.enabled}，baseURL=${audioTranscriptionConfig.baseURL}，model=${audioTranscriptionConfig.model}，language=${audioTranscriptionConfig.language}，batchSize=${audioTranscriptionConfig.batchSize}，maxRetryCount=${audioTranscriptionConfig.maxRetryCount}，requestTimeoutMs=${audioTranscriptionConfig.requestTimeoutMs}，maxAudioBase64Bytes=${audioTranscriptionConfig.maxAudioBase64Bytes}`
+                    );
 
-                    return;
+                    if (!audioTranscriptionConfig.enabled) {
+                        this.LOGGER.info("语音转文字未启用，跳过当前任务");
+
+                        return;
+                    }
+
+                    if (!audioTranscriptionConfig.apiKey) {
+                        this.LOGGER.warning("语音转文字配置缺少 API Key，跳过当前任务");
+
+                        return;
+                    }
+
+                    this.LOGGER.info("开始查询待处理语音媒体记录");
+                    const mediaItems = await this.imDbAccessService.getPendingAudioMediaByGroupIdsAndTimeRange(
+                        attrs.groupIds,
+                        attrs.startTimeStamp,
+                        attrs.endTimeStamp,
+                        audioTranscriptionConfig.batchSize
+                    );
+
+                    if (mediaItems.length === 0) {
+                        this.LOGGER.info("没有需要语音转文字处理的新音频，当前任务结束");
+
+                        return;
+                    }
+
+                    this.LOGGER.info(`本轮准备处理 ${mediaItems.length} 条语音`);
+                    const stats = this._createStats();
+
+                    for (const media of mediaItems) {
+                        await job.touch();
+                        await this._processMedia(media, config, stats);
+                    }
+
+                    const averageDurationMs =
+                        stats.processed === 0 ? 0 : Math.round(stats.totalDurationMs / stats.processed);
+
+                    this.LOGGER.success(
+                        `语音转文字完成：处理=${stats.processed}，成功=${stats.success}，失败=${stats.failed}，等待重试=${stats.retrying}，跳过=${stats.skipped}，平均耗时=${averageDurationMs}ms`
+                    );
+                } finally {
+                    await this._logAudioDbSummary(attrs.groupIds, attrs.startTimeStamp, attrs.endTimeStamp);
                 }
-
-                if (!audioTranscriptionConfig.apiKey) {
-                    this.LOGGER.warning("语音转文字配置缺少 API Key，跳过当前任务");
-
-                    return;
-                }
-
-                this.LOGGER.info("开始查询待处理语音媒体记录");
-                const mediaItems = await this.imDbAccessService.getPendingAudioMediaByGroupIdsAndTimeRange(
-                    attrs.groupIds,
-                    attrs.startTimeStamp,
-                    attrs.endTimeStamp,
-                    audioTranscriptionConfig.batchSize
-                );
-
-                if (mediaItems.length === 0) {
-                    this.LOGGER.info("没有需要语音转文字处理的新音频，当前任务结束");
-
-                    return;
-                }
-
-                this.LOGGER.info(`本轮准备处理 ${mediaItems.length} 条语音`);
-                const stats = this._createStats();
-
-                for (const media of mediaItems) {
-                    await job.touch();
-                    await this._processMedia(media, config, stats);
-                }
-
-                const averageDurationMs =
-                    stats.processed === 0 ? 0 : Math.round(stats.totalDurationMs / stats.processed);
-
-                this.LOGGER.success(
-                    `语音转文字完成：处理=${stats.processed}，成功=${stats.success}，失败=${stats.failed}，等待重试=${stats.retrying}，跳过=${stats.skipped}，平均耗时=${averageDurationMs}ms`
-                );
             },
             {
                 concurrency: 1,
@@ -120,6 +129,62 @@ export class AudioTranscriptionTaskHandler {
             retrying: 0,
             totalDurationMs: 0
         };
+    }
+
+    private async _logAudioDbSummary(groupIds: string[], timeStart: number, timeEnd: number): Promise<void> {
+        try {
+            const rows = await this.imDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange(
+                groupIds,
+                timeStart,
+                timeEnd,
+                ["audio"]
+            );
+            const counts = this._createAudioStatusCounts(rows);
+            const latestUpdatedAt = this._getLatestUpdatedAt(rows);
+            const failReasonSampleCount = rows.reduce(
+                (total, row) => total + (Number(row.failReasonSampleCount) || 0),
+                0
+            );
+
+            this.LOGGER.info(
+                `语音转文字 DB 汇总：pending=${counts.pending}，success=${counts.success}，failed=${counts.failed}，skipped=${counts.skipped}，latestUpdatedAt=${latestUpdatedAt ?? ""}，failReasonSampleCount=${failReasonSampleCount}`
+            );
+        } catch (error) {
+            this.LOGGER.warning(`语音转文字 DB 汇总失败：${this._formatUnknownError(error)}`);
+        }
+    }
+
+    private _createAudioStatusCounts(rows: MediaProcessingMediaSummaryRow[]): Record<string, number> {
+        const counts: Record<string, number> = {
+            pending: 0,
+            success: 0,
+            failed: 0,
+            skipped: 0
+        };
+
+        for (const row of rows) {
+            if (row.mediaType === "audio") {
+                counts[row.status] = Number(row.count) || 0;
+            }
+        }
+
+        return counts;
+    }
+
+    private _getLatestUpdatedAt(rows: MediaProcessingMediaSummaryRow[]): number | null {
+        let latestUpdatedAt: number | null = null;
+
+        for (const row of rows) {
+            if (typeof row.latestUpdatedAt !== "number") {
+                continue;
+            }
+
+            if (latestUpdatedAt === null || row.latestUpdatedAt > latestUpdatedAt) {
+                latestUpdatedAt = row.latestUpdatedAt;
+            }
+        }
+
+        return latestUpdatedAt;
     }
 
     private async _processMedia(
@@ -165,9 +230,7 @@ export class AudioTranscriptionTaskHandler {
                 media.sourcePath
             );
 
-            this.LOGGER.debug(
-                `语音源文件路径校验通过：${this._formatMediaForLog(media)}，sourcePath=${this._truncateText(media.sourcePath, 160)}`
-            );
+            this.LOGGER.debug(`语音源文件路径校验通过：${this._formatMediaForLog(media)}`);
             const convertStartedAt = Date.now();
             const audioDataUrl = await this.audioDataUrlService.readAsWavDataUrl(
                 audioFilePath,

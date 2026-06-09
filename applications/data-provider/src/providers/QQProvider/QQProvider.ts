@@ -45,6 +45,11 @@ interface QQMessageParseStats {
     skippedInvalidQuotedProtobufCount: number;
     parseFailurePlaceholderCount: number;
     emptyContentPlaceholderCount: number;
+    forwardMergedSeenCount: number;
+    forwardMergedExpandedCount: number;
+    forwardMergedXmlFallbackCount: number;
+    forwardMergedParseFailureCount: number;
+    forwardMergedNestedTruncatedCount: number;
 }
 
 interface ParsedMessageContent {
@@ -55,6 +60,23 @@ interface ParsedMessageContent {
 interface ParsedStoredMessageContent {
     content: string;
     quotedMsgContent?: string;
+    nestedTruncated: boolean;
+}
+
+interface ForwardMergedFormatResult {
+    content: string;
+    cacheMessageCount: number;
+    expandedMessageCount: number;
+    nestedTruncated: boolean;
+}
+
+interface ForwardMergedParseResult extends ForwardMergedFormatResult {
+    parseFailureReason: string;
+}
+
+interface ForwardMergedMessageLineResult {
+    line: string;
+    nestedTruncated: boolean;
 }
 
 interface MediaOwnerInfo {
@@ -318,7 +340,12 @@ export class QQProvider extends Disposable implements IIMProvider {
             skippedEmptyQuotedContentCount: 0,
             skippedInvalidQuotedProtobufCount: 0,
             parseFailurePlaceholderCount: 0,
-            emptyContentPlaceholderCount: 0
+            emptyContentPlaceholderCount: 0,
+            forwardMergedSeenCount: 0,
+            forwardMergedExpandedCount: 0,
+            forwardMergedXmlFallbackCount: 0,
+            forwardMergedParseFailureCount: 0,
+            forwardMergedNestedTruncatedCount: 0
         };
     }
 
@@ -341,6 +368,11 @@ export class QQProvider extends Disposable implements IIMProvider {
         }
         if (stats.emptyContentPlaceholderCount > 0) {
             this.LOGGER.warning(`为 ${stats.emptyContentPlaceholderCount} 条保留类型消息正文为空写入占位内容。`);
+        }
+        if (stats.forwardMergedSeenCount > 0) {
+            this.LOGGER.info(
+                `合并转发解析统计：seen=${stats.forwardMergedSeenCount}，expanded=${stats.forwardMergedExpandedCount}，xmlFallback=${stats.forwardMergedXmlFallbackCount}，parseFailure=${stats.forwardMergedParseFailureCount}，nestedTruncated=${stats.forwardMergedNestedTruncatedCount}`
+            );
         }
     }
 
@@ -379,18 +411,23 @@ export class QQProvider extends Disposable implements IIMProvider {
     private async _parseForwardMergedContentFromExtraData(
         extraData: Buffer | null | undefined,
         parentMsg: RawChatMessage
-    ): Promise<string> {
+    ): Promise<ForwardMergedParseResult> {
         if (!extraData || extraData.length === 0) {
-            return "";
+            return this._createEmptyForwardMergedParseResult("extraData 为空");
         }
 
         try {
             const msgSegment = this.messagePBParser.parseMessageSegment(extraData);
+            const storedMessages = this._getStoredMessages(msgSegment);
+            const formatResult = await this._formatForwardMergedMessages(storedMessages, parentMsg, 0);
 
-            return await this._formatForwardMergedMessages(this._getStoredMessages(msgSegment), parentMsg, 0);
+            return {
+                ...formatResult,
+                parseFailureReason: !formatResult.content && storedMessages.length === 0 ? "转发缓存消息为空" : ""
+            };
         } catch (error) {
             if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
-                return "";
+                return this._createEmptyForwardMergedParseResult(String(error));
             }
 
             throw error;
@@ -401,30 +438,55 @@ export class QQProvider extends Disposable implements IIMProvider {
         storedMessages: StoredMsg[],
         parentMsg: RawChatMessage,
         depth: number
-    ): Promise<string> {
+    ): Promise<ForwardMergedFormatResult> {
         if (storedMessages.length === 0) {
-            return "";
+            return {
+                content: "",
+                cacheMessageCount: 0,
+                expandedMessageCount: 0,
+                nestedTruncated: false
+            };
         }
 
         if (depth >= QQ_FORWARD_MERGED_MAX_DEPTH) {
-            return "[合并转发，嵌套过深未继续展开]";
+            return {
+                content: "[合并转发，嵌套过深未继续展开]",
+                cacheMessageCount: storedMessages.length,
+                expandedMessageCount: 0,
+                nestedTruncated: true
+            };
         }
 
         const lines: string[] = [];
+        let nestedTruncated = false;
 
         for (let i = 0; i < storedMessages.length; i++) {
-            const line = await this._formatForwardMergedMessageLine(storedMessages[i], parentMsg, depth, i);
+            const lineResult = await this._formatForwardMergedMessageLine(storedMessages[i], parentMsg, depth, i);
 
-            if (line) {
-                lines.push(line);
+            if (lineResult.line) {
+                lines.push(lineResult.line);
+            }
+
+            if (lineResult.nestedTruncated) {
+                nestedTruncated = true;
             }
         }
 
         if (lines.length === 0) {
-            return "";
+            return {
+                content: "",
+                cacheMessageCount: storedMessages.length,
+                expandedMessageCount: 0,
+                nestedTruncated
+            };
         }
 
-        return `[合并转发，共 ${storedMessages.length} 条]\n${lines.join("\n")}`;
+        return {
+            content: `[合并转发，共 ${storedMessages.length} 条]\n${lines.join("\n")}`,
+            cacheMessageCount: storedMessages.length,
+            expandedMessageCount: lines.length,
+            nestedTruncated
+        };
     }
 
     private async _formatForwardMergedMessageLine(
@@ -432,15 +494,17 @@ export class QQProvider extends Disposable implements IIMProvider {
         parentMsg: RawChatMessage,
         depth: number,
         itemIndex: number
-    ): Promise<string> {
+    ): Promise<ForwardMergedMessageLineResult> {
         const parsed = await this._parseStoredMessageContent(storedMsg, parentMsg, depth, itemIndex);
         const nickname = this._normalizeInlineText(storedMsg.sendMemberName || storedMsg.sendNickName);
+        const line = parsed.quotedMsgContent
+            ? `("${nickname}"):【这条消息引用了其他人的消息: ${parsed.quotedMsgContent}】${parsed.content}`
+            : `("${nickname}"): ${parsed.content}`;
 
-        if (parsed.quotedMsgContent) {
-            return `("${nickname}"):【这条消息引用了其他人的消息: ${parsed.quotedMsgContent}】${parsed.content}`;
-        }
-
-        return `("${nickname}"): ${parsed.content}`;
+        return {
+            line,
+            nestedTruncated: parsed.nestedTruncated
+        };
     }
 
     private async _parseStoredMessageContent(
@@ -464,15 +528,16 @@ export class QQProvider extends Disposable implements IIMProvider {
                 : undefined;
 
         if (msgType === MsgType.FORWARD_MERGED) {
-            const content = await this._formatForwardMergedMessages(
+            const formatResult = await this._formatForwardMergedMessages(
                 storedMsg.extraMessages || [],
                 parentMsg,
                 depth + 1
             );
 
             return {
-                content: content || buildQQEmptyContentPlaceholder(msgType),
-                quotedMsgContent
+                content: formatResult.content || buildQQEmptyContentPlaceholder(msgType),
+                quotedMsgContent,
+                nestedTruncated: formatResult.nestedTruncated
             };
         }
 
@@ -484,8 +549,35 @@ export class QQProvider extends Disposable implements IIMProvider {
 
         return {
             content: parsedContent.content || buildQQEmptyContentPlaceholder(msgType),
-            quotedMsgContent
+            quotedMsgContent,
+            nestedTruncated: false
         };
+    }
+
+    private _createEmptyForwardMergedParseResult(parseFailureReason: string): ForwardMergedParseResult {
+        return {
+            content: "",
+            cacheMessageCount: 0,
+            expandedMessageCount: 0,
+            nestedTruncated: false,
+            parseFailureReason
+        };
+    }
+
+    private _logForwardMergedAudit(msgId: string, audit: ForwardMergedParseResult, xmlFallback: boolean): void {
+        const message =
+            `合并转发解析审计：msgId=${msgId}` +
+            `，cacheMessageCount=${audit.cacheMessageCount}` +
+            `，expandedMessageCount=${audit.expandedMessageCount}` +
+            `，nestedTruncated=${audit.nestedTruncated}` +
+            `，xmlFallback=${xmlFallback}` +
+            `，parseFailureReason=${audit.parseFailureReason || ""}`;
+
+        if (xmlFallback || audit.parseFailureReason || audit.nestedTruncated) {
+            this.LOGGER.warning(message);
+        } else {
+            this.LOGGER.success(message);
+        }
     }
 
     private _getStoredMessageId(storedMsg: StoredMsg, parentMsg: RawChatMessage, itemIndex: number): string {
@@ -618,7 +710,7 @@ export class QQProvider extends Disposable implements IIMProvider {
         const sourceUrl = this._normalizeImageSourceUrl(
             element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow
         );
-        const sourcePath = this._normalizeQQSourcePath(element.picThumbPath);
+        const sourcePath = this._resolveImageSourcePath(element);
         const originImageMd5 = this._normalizeInlineText(element.originImageMd5);
         const qqImageText = this._normalizeInlineText(element.imageText);
 
@@ -638,6 +730,10 @@ export class QQProvider extends Disposable implements IIMProvider {
             originImageMd5: originImageMd5 || undefined,
             qqImageText: qqImageText || undefined
         };
+    }
+
+    private _resolveImageSourcePath(element: MsgElement): string {
+        return this._normalizeQQSourcePath(element.picThumbPath) || this._normalizeQQSourcePath(element.filePath);
     }
 
     private _normalizeImageSourceUrl(imageUrl: string | null | undefined): string {
@@ -774,8 +870,10 @@ export class QQProvider extends Disposable implements IIMProvider {
             parts.push(`MD5：${this._truncateText(md5, 12)}`);
         }
 
-        if (this._normalizeInlineText(element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow)) {
-            parts.push("含图片链接");
+        if (this._normalizeImageSourceUrl(element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow)) {
+            parts.push("含可访问图片链接");
+        } else if (this._resolveImageSourcePath(element)) {
+            parts.push("含本地缓存");
         }
 
         if (parts.length === 0) {
@@ -1095,6 +1193,13 @@ export class QQProvider extends Disposable implements IIMProvider {
         return result.trim();
     }
 
+    private _joinReasons(reasons: string[]): string {
+        return reasons
+            .map(reason => this._normalizeInlineText(reason))
+            .filter(Boolean)
+            .join("；");
+    }
+
     private _truncateText(value: string, maxLength: number): string {
         if (value.length <= maxLength) {
             return value;
@@ -1151,15 +1256,24 @@ export class QQProvider extends Disposable implements IIMProvider {
             }
         }
 
+        let forwardMergedAudit: ForwardMergedParseResult | null = null;
+        let forwardMergedOuterParseFailed = false;
+
         try {
             if (msgType === MsgType.FORWARD_MERGED) {
-                const forwardMergedContent = await this._parseForwardMergedContentFromExtraData(
+                stats.forwardMergedSeenCount++;
+                forwardMergedAudit = await this._parseForwardMergedContentFromExtraData(
                     result[GMC.extraData],
                     processedMsg
                 );
 
-                if (forwardMergedContent) {
-                    processedMsg.messageContent = forwardMergedContent;
+                if (forwardMergedAudit.content) {
+                    stats.forwardMergedExpandedCount++;
+                    if (forwardMergedAudit.nestedTruncated) {
+                        stats.forwardMergedNestedTruncatedCount++;
+                    }
+                    this._logForwardMergedAudit(processedMsg.msgId, forwardMergedAudit, false);
+                    processedMsg.messageContent = forwardMergedAudit.content;
                     processedMsg.mediaItems = [];
 
                     return processedMsg;
@@ -1178,10 +1292,35 @@ export class QQProvider extends Disposable implements IIMProvider {
         } catch (error) {
             if (error === ErrorReasons.PROTOBUF_ERROR) {
                 stats.parseFailurePlaceholderCount++;
+                if (msgType === MsgType.FORWARD_MERGED && forwardMergedAudit) {
+                    forwardMergedOuterParseFailed = true;
+                    forwardMergedAudit = {
+                        ...forwardMergedAudit,
+                        parseFailureReason: this._joinReasons([
+                            forwardMergedAudit.parseFailureReason,
+                            "外壳正文解析失败"
+                        ])
+                    };
+                }
                 processedMsg.messageContent = buildQQParseFailurePlaceholder(msgType);
             } else {
                 throw error;
             }
+        }
+
+        if (msgType === MsgType.FORWARD_MERGED && forwardMergedAudit) {
+            const xmlFallback = processedMsg.messageContent.length > 0 && !forwardMergedOuterParseFailed;
+
+            if (xmlFallback) {
+                stats.forwardMergedXmlFallbackCount++;
+            }
+            if (forwardMergedAudit.parseFailureReason) {
+                stats.forwardMergedParseFailureCount++;
+            }
+            if (forwardMergedAudit.nestedTruncated) {
+                stats.forwardMergedNestedTruncatedCount++;
+            }
+            this._logForwardMergedAudit(processedMsg.msgId, forwardMergedAudit, xmlFallback);
         }
 
         if (processedMsg.messageContent === "") {

@@ -7,7 +7,11 @@ import { agendaInstance } from "@root/common/scheduler/agenda";
 import { TaskHandlerTypes, TaskParameters } from "@root/common/scheduler/@types/Tasks";
 import Logger from "@root/common/util/Logger";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
-import { ImDbAccessService, PendingChatMessageMedia } from "@root/common/services/database/ImDbAccessService";
+import {
+    ImDbAccessService,
+    MediaProcessingMediaSummaryRow,
+    PendingChatMessageMedia
+} from "@root/common/services/database/ImDbAccessService";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 import { GlobalConfig } from "@root/common/services/config/schemas/GlobalConfig";
 
@@ -32,6 +36,8 @@ interface ImageDataUrlResult {
     dataUrl: string;
     byteLength: number;
 }
+
+type ImageUnderstandingAuditStatus = "pending" | "success" | "failed" | "skipped";
 
 /**
  * 图片理解任务处理器
@@ -86,6 +92,12 @@ export class ImageUnderstandingTaskHandler {
                 );
 
                 if (mediaItems.length === 0) {
+                    await this._logImageMediaStatusSummary(
+                        attrs.groupIds,
+                        queryStartTime,
+                        attrs.endTimeStamp,
+                        "no-pending"
+                    );
                     this.LOGGER.info("没有需要图片理解处理的新图片");
 
                     return;
@@ -104,6 +116,12 @@ export class ImageUnderstandingTaskHandler {
 
                 this.LOGGER.success(
                     `图片理解完成：处理=${stats.processed}，成功=${stats.success}，失败=${stats.failed}，跳过=${stats.skipped}，OCR失败=${stats.ocrFailed}，Vision失败=${stats.visionFailed}，平均耗时=${averageDurationMs}ms`
+                );
+                await this._logImageMediaStatusSummary(
+                    attrs.groupIds,
+                    queryStartTime,
+                    attrs.endTimeStamp,
+                    "completed"
                 );
             },
             {
@@ -125,6 +143,61 @@ export class ImageUnderstandingTaskHandler {
         };
     }
 
+    private async _logImageMediaStatusSummary(
+        groupIds: string[],
+        timeStart: number,
+        timeEnd: number,
+        stage: "no-pending" | "completed"
+    ): Promise<void> {
+        try {
+            const rows = await this.imDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange(
+                groupIds,
+                timeStart,
+                timeEnd,
+                ["image"]
+            );
+            const message = this._formatImageMediaStatusSummary(rows, stage);
+            const skippedCount = rows
+                .filter(row => row.mediaType === "image" && row.status === "skipped")
+                .reduce((sum, row) => sum + Number(row.count || 0), 0);
+
+            if (skippedCount > 0) {
+                this.LOGGER.warning(message);
+            } else {
+                this.LOGGER.info(message);
+            }
+        } catch (error) {
+            this.LOGGER.warning(`图片理解媒体诊断统计失败：${this._formatUnknownError(error)}`);
+        }
+    }
+
+    private _formatImageMediaStatusSummary(
+        rows: MediaProcessingMediaSummaryRow[],
+        stage: "no-pending" | "completed"
+    ): string {
+        const rowMap = new Map<string, MediaProcessingMediaSummaryRow>();
+
+        for (const row of rows) {
+            if (row.mediaType === "image") {
+                rowMap.set(row.status, row);
+            }
+        }
+
+        const parts = (["pending", "success", "failed", "skipped"] as const).map(status => {
+            const row = rowMap.get(status);
+
+            return (
+                `${status}=${Number(row?.count || 0)}` +
+                `,sourceUrl=${Number(row?.sourceUrlCount || 0)}` +
+                `,sourcePath=${Number(row?.sourcePathCount || 0)}` +
+                `,missingSource=${Number(row?.missingSourceCount || 0)}` +
+                `,failReasonSample=${Number(row?.failReasonSampleCount || 0)}`
+            );
+        });
+
+        return `图片理解媒体诊断(${stage})：${parts.join("；")}`;
+    }
+
     private async _processMedia(
         media: PendingChatMessageMedia,
         config: GlobalConfig,
@@ -137,21 +210,27 @@ export class ImageUnderstandingTaskHandler {
 
         try {
             if (media.retryCount > imageUnderstandingConfig.retryCount) {
+                const failReason = "图片理解超过最大重试次数";
+
                 await this.imDbAccessService.updateChatMessageMediaUnderstanding(media.mediaId, {
                     status: "failed",
-                    failReason: "图片理解超过最大重试次数"
+                    failReason
                 });
                 stats.failed++;
+                this._logImageUnderstandingAudit(media, "failed", "", "", "", null, failReason, "warning");
 
                 return;
             }
 
             if (!media.sourceUrl && !media.sourcePath) {
+                const failReason = "图片缺少可访问 URL 或本地缓存路径";
+
                 await this.imDbAccessService.updateChatMessageMediaUnderstanding(media.mediaId, {
                     status: "skipped",
-                    failReason: "图片缺少可访问 URL 或本地缓存路径"
+                    failReason
                 });
                 stats.skipped++;
+                this._logImageUnderstandingAudit(media, "skipped", "", "", "", null, failReason, "warning");
 
                 return;
             }
@@ -231,20 +310,43 @@ export class ImageUnderstandingTaskHandler {
                     modelName: imageUnderstandingConfig.vision.modelName
                 });
                 stats.success++;
+                this._logImageUnderstandingAudit(
+                    media,
+                    "success",
+                    ocrText,
+                    visionResult.visionDescription,
+                    understandingText,
+                    imageUnderstandingConfig.vision.modelName,
+                    ocrTextResult.failReason || null,
+                    "success"
+                );
 
                 return;
             }
 
             if (ocrText) {
+                const understandingText = this._buildOcrOnlyUnderstandingText(ocrText);
+                const failReason = this._joinReasons([ocrTextResult.failReason, visionFailReason]);
+
                 await this.imDbAccessService.updateChatMessageMediaUnderstanding(media.mediaId, {
                     status: "success",
                     ocrText,
-                    understandingText: this._buildOcrOnlyUnderstandingText(ocrText),
-                    failReason: this._joinReasons([ocrTextResult.failReason, visionFailReason]),
+                    understandingText,
+                    failReason,
                     ocrEngine: imageUnderstandingConfig.ocr.ocrEngine,
                     modelName: null
                 });
                 stats.success++;
+                this._logImageUnderstandingAudit(
+                    media,
+                    "success",
+                    ocrText,
+                    "",
+                    understandingText,
+                    null,
+                    failReason,
+                    "success"
+                );
 
                 return;
             }
@@ -312,6 +414,33 @@ export class ImageUnderstandingTaskHandler {
         }
     }
 
+    private _logImageUnderstandingAudit(
+        media: PendingChatMessageMedia,
+        status: ImageUnderstandingAuditStatus,
+        ocrText: string | null,
+        visionDescription: string | null,
+        understandingText: string | null,
+        modelName: string | null,
+        failReason: string | null,
+        level: "success" | "warning"
+    ): void {
+        const message =
+            `图片理解审计：mediaId=${media.mediaId}` +
+            `，msgId=${media.msgId}` +
+            `，status=${status}` +
+            `，ocrLen=${this._getTextLength(ocrText)}` +
+            `，visionLen=${this._getTextLength(visionDescription)}` +
+            `，understandingLen=${this._getTextLength(understandingText)}` +
+            `，modelName=${modelName || ""}` +
+            `，failReason=${this._truncateText(failReason || "", 240)}`;
+
+        if (level === "success") {
+            this.LOGGER.success(message);
+        } else {
+            this.LOGGER.warning(message);
+        }
+    }
+
     private async _markFailedOrRetry(
         media: PendingChatMessageMedia,
         failReason: string,
@@ -327,11 +456,14 @@ export class ImageUnderstandingTaskHandler {
             incrementRetryCount: true
         });
 
+        const status = shouldRetry ? "pending" : "failed";
+        const truncatedFailReason = this._truncateText(failReason || "图片理解失败", 240);
+
         if (shouldRetry) {
-            this.LOGGER.warning(`图片理解失败，等待下轮重试：mediaId=${media.mediaId}，msgId=${media.msgId}`);
+            this._logImageUnderstandingAudit(media, status, "", "", "", null, truncatedFailReason, "warning");
         } else {
             stats.failed++;
-            this.LOGGER.warning(`图片理解最终失败：mediaId=${media.mediaId}，msgId=${media.msgId}`);
+            this._logImageUnderstandingAudit(media, status, "", "", "", null, truncatedFailReason, "warning");
         }
     }
 
@@ -477,6 +609,10 @@ export class ImageUnderstandingTaskHandler {
 
     private _buildOcrOnlyUnderstandingText(ocrText: string): string {
         return ocrText ? `图片文字：${ocrText}` : "";
+    }
+
+    private _getTextLength(value: string | null | undefined): number {
+        return value ? value.length : 0;
     }
 
     private _joinReasons(reasons: string[]): string {

@@ -143,6 +143,30 @@ export const GetDigestCoverageSchema = z
     });
 export type GetDigestCoverageParams = z.infer<typeof GetDigestCoverageSchema>;
 
+const OptionalGroupIdSchema = z.preprocess(value => {
+    if (typeof value === "string" && value.trim().length === 0) {
+        return undefined;
+    }
+
+    return value;
+}, z.string().min(1, "groupId不能为空").optional());
+
+const MediaProcessingMediaTypeSchema = z.enum(["image", "audio"]);
+
+export const GetMediaProcessingDiagnosisSchema = z
+    .object({
+        groupId: OptionalGroupIdSchema,
+        timeStart: UnixMsSchema,
+        timeEnd: UnixMsSchema,
+        detailLimit: z.number().int().positive().max(200).optional().default(50),
+        mediaTypes: z.array(MediaProcessingMediaTypeSchema).nonempty().optional().default(["image", "audio"])
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
+export type GetMediaProcessingDiagnosisParams = z.infer<typeof GetMediaProcessingDiagnosisSchema>;
+
 // ==================== Interest Score ====================
 
 export const GetInterestScoreResultsSchema = z.object({
