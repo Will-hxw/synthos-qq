@@ -60,6 +60,7 @@ describe("AudioTranscriptionTaskHandler", () => {
     };
     const mockImDbAccessService = {
         getPendingAudioMediaByGroupIdsAndTimeRange: vi.fn(),
+        getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange: vi.fn(),
         updateChatMessageMediaTranscription: vi.fn(),
         updateAudioTranscribedMessage: vi.fn(),
         getRawChatMessageByMsgId: vi.fn(),
@@ -70,6 +71,7 @@ describe("AudioTranscriptionTaskHandler", () => {
         vi.clearAllMocks();
         mockConfigManagerService.getCurrentConfig.mockResolvedValue(createConfig());
         mockImDbAccessService.getPendingAudioMediaByGroupIdsAndTimeRange.mockResolvedValue([]);
+        mockImDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange.mockResolvedValue([]);
         mockImDbAccessService.updateChatMessageMediaTranscription.mockResolvedValue(undefined);
         mockImDbAccessService.updateAudioTranscribedMessage.mockResolvedValue(undefined);
         mockImDbAccessService.getRawChatMessageByMsgId.mockResolvedValue(createRawMessage({ sessionId: null }));
@@ -98,6 +100,12 @@ describe("AudioTranscriptionTaskHandler", () => {
 
         expect(mockImDbAccessService.getPendingAudioMediaByGroupIdsAndTimeRange).not.toHaveBeenCalled();
         expect(mockImDbAccessService.updateAudioTranscribedMessage).not.toHaveBeenCalled();
+        expect(mockImDbAccessService.getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange).toHaveBeenCalledWith(
+            ["group-a"],
+            1000,
+            2000,
+            ["audio"]
+        );
     });
 
     it("应读取当前 pipeline 范围内的 pending 语音并写回转写文本", async () => {

@@ -77,6 +77,91 @@ export interface DigestCoverageSnapshot {
     unassignedMessageSamples: DigestCoverageUnassignedMessageSample[];
 }
 
+export type MediaProcessingMediaType = "image" | "audio";
+
+export interface MediaProcessingMediaSummaryRow {
+    mediaType: MediaProcessingMediaType;
+    status: ChatMessageMedia["status"];
+    count: number;
+    latestUpdatedAt: number | null;
+    failReasonSampleCount: number;
+    sourceUrlCount: number;
+    sourcePathCount: number;
+    missingSourceCount: number;
+}
+
+export interface MediaProcessingImageSample {
+    mediaId: string;
+    msgId: string;
+    groupId: string;
+    timestamp: number;
+    status: ChatMessageMedia["status"];
+    retryCount: number;
+    failReason: string | null;
+    hasSourceUrl: boolean;
+    hasSourcePath: boolean;
+    sourceUrlKind: "http" | "qq-download" | "other" | "none";
+    ocrLen: number;
+    visionLen: number;
+    understandingLen: number;
+    modelName: string | null;
+    messageContent: string | null;
+    preProcessedContent: string | null;
+}
+
+interface MediaProcessingImageSampleDbRow
+    extends Omit<MediaProcessingImageSample, "hasSourceUrl" | "hasSourcePath"> {
+    hasSourceUrl: number;
+    hasSourcePath: number;
+}
+
+export interface MediaProcessingAudioSample {
+    mediaId: string;
+    msgId: string;
+    groupId: string;
+    timestamp: number;
+    status: ChatMessageMedia["status"];
+    retryCount: number;
+    failReason: string | null;
+    transcriptLen: number;
+    modelName: string | null;
+    messageContent: string | null;
+    preProcessedContent: string | null;
+}
+
+export interface ForwardMergedDiagnosisSummary {
+    expandedMessageCount: number;
+    parseFailurePlaceholderCount: number;
+    emptyContentPlaceholderCount: number;
+    nestedTruncatedCount: number;
+}
+
+export interface ForwardMergedDiagnosisSample {
+    msgId: string;
+    groupId: string;
+    timestamp: number;
+    messageContent: string | null;
+    preProcessedContent: string | null;
+    contentLength: number;
+}
+
+export interface MediaProcessingDiagnosisSnapshot {
+    mediaSummary: MediaProcessingMediaSummaryRow[];
+    imageSamples: MediaProcessingImageSample[];
+    audioSamples: MediaProcessingAudioSample[];
+    forwardMergedSummary: ForwardMergedDiagnosisSummary;
+    forwardMergedSamples: ForwardMergedDiagnosisSample[];
+}
+
+export interface MediaProcessingDiagnosisQuery {
+    groupId?: string;
+    groupIds?: string[];
+    timeStart: number;
+    timeEnd: number;
+    detailLimit: number;
+    mediaTypes: MediaProcessingMediaType[];
+}
+
 export interface PendingChatMessageMedia extends ChatMessageMedia {
     messageContent: string | null;
 }
@@ -225,26 +310,28 @@ export class ImDbAccessService extends Disposable {
         }
 
         const now = Date.now();
+        const skippedReasonCounts = new Map<string, number>();
 
         for (const media of mediaItems) {
             const hasSourceUrl = typeof media.sourceUrl === "string" && media.sourceUrl.trim().length > 0;
             const hasSourcePath = typeof media.sourcePath === "string" && media.sourcePath.trim().length > 0;
-            const status =
-                media.mediaType === "audio"
-                    ? hasSourcePath
-                        ? "pending"
-                        : "skipped"
-                    : hasSourceUrl || hasSourcePath
-                      ? "pending"
-                      : "skipped";
+            const hasProcessableSource =
+                media.mediaType === "audio" ? hasSourcePath : hasSourceUrl || hasSourcePath;
+            const status = hasProcessableSource ? "pending" : "skipped";
+            const failReason =
+                status === "skipped" ? this._getInitialMediaSkippedFailReason(media.mediaType) : null;
+
+            if (failReason) {
+                skippedReasonCounts.set(failReason, (skippedReasonCounts.get(failReason) || 0) + 1);
+            }
 
             await this.db.run(
                 `INSERT INTO chat_message_media (
                     mediaId, msgId, groupId, timestamp, elementIndex, mediaType, sourceProvider,
                     sourceUrl, sourcePath, fileName, fileSize, duration,
                     width, height, picType, originImageMd5, qqImageText,
-                    status, retryCount, createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, retryCount, failReason, createdAt, updatedAt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mediaId) DO UPDATE SET
                     sourceUrl = COALESCE(chat_message_media.sourceUrl, excluded.sourceUrl),
                     sourcePath = COALESCE(chat_message_media.sourcePath, excluded.sourcePath),
@@ -259,6 +346,13 @@ export class ImDbAccessService extends Disposable {
                     status = CASE
                         WHEN chat_message_media.mediaType = 'image'
                          AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND (
+                            chat_message_media.sourcePath IS NULL AND excluded.sourcePath IS NOT NULL
+                            OR chat_message_media.sourceUrl IS NULL AND excluded.sourceUrl IS NOT NULL
+                         )
+                        THEN 'pending'
+                        WHEN chat_message_media.mediaType = 'audio'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
                          AND chat_message_media.sourcePath IS NULL
                          AND excluded.sourcePath IS NOT NULL
                         THEN 'pending'
@@ -266,6 +360,13 @@ export class ImDbAccessService extends Disposable {
                     END,
                     retryCount = CASE
                         WHEN chat_message_media.mediaType = 'image'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND (
+                            chat_message_media.sourcePath IS NULL AND excluded.sourcePath IS NOT NULL
+                            OR chat_message_media.sourceUrl IS NULL AND excluded.sourceUrl IS NOT NULL
+                         )
+                        THEN 0
+                        WHEN chat_message_media.mediaType = 'audio'
                          AND chat_message_media.status IN ('pending', 'failed', 'skipped')
                          AND chat_message_media.sourcePath IS NULL
                          AND excluded.sourcePath IS NOT NULL
@@ -275,9 +376,20 @@ export class ImDbAccessService extends Disposable {
                     failReason = CASE
                         WHEN chat_message_media.mediaType = 'image'
                          AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND (
+                            chat_message_media.sourcePath IS NULL AND excluded.sourcePath IS NOT NULL
+                            OR chat_message_media.sourceUrl IS NULL AND excluded.sourceUrl IS NOT NULL
+                         )
+                        THEN NULL
+                        WHEN chat_message_media.mediaType = 'audio'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
                          AND chat_message_media.sourcePath IS NULL
                          AND excluded.sourcePath IS NOT NULL
                         THEN NULL
+                        WHEN chat_message_media.status = 'skipped'
+                         AND (chat_message_media.failReason IS NULL OR TRIM(chat_message_media.failReason) = '')
+                         AND excluded.failReason IS NOT NULL
+                        THEN excluded.failReason
                         ELSE chat_message_media.failReason
                     END,
                     updatedAt = CASE
@@ -314,11 +426,34 @@ export class ImDbAccessService extends Disposable {
                     media.qqImageText || null,
                     status,
                     0,
+                    failReason,
                     now,
                     now
                 ]
             );
         }
+
+        this._logSkippedMediaInsertReasons(skippedReasonCounts);
+    }
+
+    private _getInitialMediaSkippedFailReason(mediaType: MediaProcessingMediaType): string {
+        if (mediaType === "audio") {
+            return "语音缺少可定位的源文件路径";
+        }
+
+        return "图片缺少可访问 URL 或本地缓存路径";
+    }
+
+    private _logSkippedMediaInsertReasons(reasonCounts: Map<string, number>): void {
+        if (reasonCounts.size === 0) {
+            return;
+        }
+
+        const detail = Array.from(reasonCounts.entries())
+            .map(([reason, count]) => `${reason}=${count}`)
+            .join("，");
+
+        this.LOGGER.warning(`媒体入库 skipped 原因统计：${detail}`);
     }
 
     /**
@@ -432,6 +567,331 @@ export class ImDbAccessService extends Disposable {
         }
 
         return mediaMap;
+    }
+
+    /**
+     * 按群组和时间范围统计媒体处理状态，用于任务结束审计日志。
+     * @param groupIds 群组ID列表
+     * @param timeStart 起始消息时间戳
+     * @param timeEnd 结束消息时间戳
+     * @param mediaTypes 媒体类型列表
+     * @returns 按媒体类型和状态聚合的只读统计
+     */
+    public async getChatMessageMediaStatusSummaryByGroupIdsAndTimeRange(
+        groupIds: string[],
+        timeStart: number,
+        timeEnd: number,
+        mediaTypes: MediaProcessingMediaType[]
+    ): Promise<MediaProcessingMediaSummaryRow[]> {
+        const uniqueGroupIds = [...new Set(groupIds)];
+        const uniqueMediaTypes = this._normalizeMediaProcessingTypes(mediaTypes);
+
+        if (uniqueGroupIds.length === 0 || uniqueMediaTypes.length === 0) {
+            return [];
+        }
+
+        const groupPlaceholders = uniqueGroupIds.map(() => "?").join(", ");
+        const mediaTypePlaceholders = uniqueMediaTypes.map(() => "?").join(", ");
+
+        return await this.db.all<MediaProcessingMediaSummaryRow>(
+            `SELECT
+                mediaType AS mediaType,
+                status AS status,
+                COUNT(*) AS count,
+                MAX(updatedAt) AS latestUpdatedAt,
+                SUM(CASE WHEN failReason IS NOT NULL AND TRIM(failReason) <> '' THEN 1 ELSE 0 END) AS failReasonSampleCount,
+                SUM(CASE WHEN sourceUrl IS NOT NULL AND TRIM(sourceUrl) <> '' THEN 1 ELSE 0 END) AS sourceUrlCount,
+                SUM(CASE WHEN sourcePath IS NOT NULL AND TRIM(sourcePath) <> '' THEN 1 ELSE 0 END) AS sourcePathCount,
+                SUM(
+                    CASE
+                        WHEN mediaType = 'audio'
+                         AND (sourcePath IS NULL OR TRIM(sourcePath) = '')
+                        THEN 1
+                        WHEN mediaType = 'image'
+                         AND (sourceUrl IS NULL OR TRIM(sourceUrl) = '')
+                         AND (sourcePath IS NULL OR TRIM(sourcePath) = '')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS missingSourceCount
+             FROM chat_message_media
+             WHERE groupId IN (${groupPlaceholders})
+               AND timestamp BETWEEN ? AND ?
+               AND mediaType IN (${mediaTypePlaceholders})
+             GROUP BY mediaType, status
+             ORDER BY mediaType ASC, status ASC`,
+            [...uniqueGroupIds, timeStart, timeEnd, ...uniqueMediaTypes]
+        );
+    }
+
+    /**
+     * 获取媒体处理与合并转发的只读诊断快照。
+     * @param query 诊断查询参数
+     * @returns 媒体聚合、媒体样本和合并转发样本
+     */
+    public async getMediaProcessingDiagnosisSnapshot(
+        query: MediaProcessingDiagnosisQuery
+    ): Promise<MediaProcessingDiagnosisSnapshot> {
+        const mediaTypes = this._normalizeMediaProcessingTypes(query.mediaTypes);
+        const emptySnapshot = this._createEmptyMediaProcessingDiagnosisSnapshot();
+        const mediaWhere = this._buildMediaProcessingWhereClause(query, mediaTypes);
+        const forwardWhere = this._buildForwardMergedWhereClause(query);
+
+        if (!mediaWhere && !forwardWhere) {
+            return emptySnapshot;
+        }
+
+        const mediaSummary = mediaWhere
+            ? await this.db.all<MediaProcessingMediaSummaryRow>(
+                  `SELECT
+                    m.mediaType AS mediaType,
+                    m.status AS status,
+                    COUNT(*) AS count,
+                    MAX(m.updatedAt) AS latestUpdatedAt,
+                    SUM(CASE WHEN m.failReason IS NOT NULL AND TRIM(m.failReason) <> '' THEN 1 ELSE 0 END) AS failReasonSampleCount,
+                    SUM(CASE WHEN m.sourceUrl IS NOT NULL AND TRIM(m.sourceUrl) <> '' THEN 1 ELSE 0 END) AS sourceUrlCount,
+                    SUM(CASE WHEN m.sourcePath IS NOT NULL AND TRIM(m.sourcePath) <> '' THEN 1 ELSE 0 END) AS sourcePathCount,
+                    SUM(
+                        CASE
+                            WHEN m.mediaType = 'audio'
+                             AND (m.sourcePath IS NULL OR TRIM(m.sourcePath) = '')
+                            THEN 1
+                            WHEN m.mediaType = 'image'
+                             AND (m.sourceUrl IS NULL OR TRIM(m.sourceUrl) = '')
+                             AND (m.sourcePath IS NULL OR TRIM(m.sourcePath) = '')
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS missingSourceCount
+                   FROM chat_message_media m
+                   WHERE ${mediaWhere.sql}
+                   GROUP BY m.mediaType, m.status
+                   ORDER BY m.mediaType ASC, m.status ASC`,
+                  mediaWhere.params
+              )
+            : [];
+
+        const imageSamples =
+            mediaWhere && mediaTypes.includes("image")
+                ? (
+                      await this.db.all<MediaProcessingImageSampleDbRow>(
+                          `SELECT
+                        m.mediaId AS mediaId,
+                        m.msgId AS msgId,
+                        m.groupId AS groupId,
+                        m.timestamp AS timestamp,
+                        m.status AS status,
+                        m.retryCount AS retryCount,
+                        m.failReason AS failReason,
+                        CASE WHEN m.sourceUrl IS NOT NULL AND TRIM(m.sourceUrl) <> '' THEN 1 ELSE 0 END AS hasSourceUrl,
+                        CASE WHEN m.sourcePath IS NOT NULL AND TRIM(m.sourcePath) <> '' THEN 1 ELSE 0 END AS hasSourcePath,
+                        CASE
+                            WHEN m.sourceUrl IS NULL OR TRIM(m.sourceUrl) = '' THEN 'none'
+                            WHEN m.sourceUrl LIKE 'http://%' OR m.sourceUrl LIKE 'https://%' THEN 'http'
+                            WHEN m.sourceUrl LIKE '/download?%' THEN 'qq-download'
+                            ELSE 'other'
+                        END AS sourceUrlKind,
+                        LENGTH(COALESCE(m.ocrText, '')) AS ocrLen,
+                        LENGTH(COALESCE(m.visionDescription, '')) AS visionLen,
+                        LENGTH(COALESCE(m.understandingText, '')) AS understandingLen,
+                        m.modelName AS modelName,
+                        c.messageContent AS messageContent,
+                        c.preProcessedContent AS preProcessedContent
+                       FROM chat_message_media m
+                       INNER JOIN chat_messages c ON c.msgId = m.msgId
+                       WHERE ${mediaWhere.sql}
+                         AND m.mediaType = 'image'
+                       ORDER BY m.updatedAt DESC, m.timestamp DESC, m.msgId ASC, m.elementIndex ASC
+                       LIMIT ?`,
+                          [...mediaWhere.params, query.detailLimit]
+                      )
+                  ).map(row => ({
+                      ...row,
+                      hasSourceUrl: Boolean(row.hasSourceUrl),
+                      hasSourcePath: Boolean(row.hasSourcePath)
+                  }))
+                : [];
+
+        const audioSamples =
+            mediaWhere && mediaTypes.includes("audio")
+                ? await this.db.all<MediaProcessingAudioSample>(
+                      `SELECT
+                        m.mediaId AS mediaId,
+                        m.msgId AS msgId,
+                        m.groupId AS groupId,
+                        m.timestamp AS timestamp,
+                        m.status AS status,
+                        m.retryCount AS retryCount,
+                        m.failReason AS failReason,
+                        LENGTH(COALESCE(m.transcript, '')) AS transcriptLen,
+                        m.modelName AS modelName,
+                        c.messageContent AS messageContent,
+                        c.preProcessedContent AS preProcessedContent
+                       FROM chat_message_media m
+                       INNER JOIN chat_messages c ON c.msgId = m.msgId
+                       WHERE ${mediaWhere.sql}
+                         AND m.mediaType = 'audio'
+                       ORDER BY m.updatedAt DESC, m.timestamp DESC, m.msgId ASC, m.elementIndex ASC
+                       LIMIT ?`,
+                      [...mediaWhere.params, query.detailLimit]
+                  )
+                : [];
+
+        const forwardMergedSummary = forwardWhere
+            ? await this.db.get<ForwardMergedDiagnosisSummary>(
+                  `SELECT
+                    COALESCE(SUM(CASE WHEN messageContent LIKE ? THEN 1 ELSE 0 END), 0) AS expandedMessageCount,
+                    COALESCE(SUM(CASE WHEN messageContent = ? THEN 1 ELSE 0 END), 0) AS parseFailurePlaceholderCount,
+                    COALESCE(SUM(CASE WHEN messageContent = ? THEN 1 ELSE 0 END), 0) AS emptyContentPlaceholderCount,
+                    COALESCE(SUM(CASE WHEN messageContent LIKE ? THEN 1 ELSE 0 END), 0) AS nestedTruncatedCount
+                   FROM chat_messages
+                   WHERE ${forwardWhere.sql}`,
+                  [
+                      "[合并转发，共 %",
+                      "[合并转发消息解析失败]",
+                      "[合并转发消息暂无可读正文]",
+                      "%[合并转发，嵌套过深未继续展开]%",
+                      ...forwardWhere.params
+                  ]
+              )
+            : null;
+
+        const forwardMergedSamples = forwardWhere
+            ? await this.db.all<ForwardMergedDiagnosisSample>(
+                  `SELECT
+                    msgId AS msgId,
+                    groupId AS groupId,
+                    timestamp AS timestamp,
+                    messageContent AS messageContent,
+                    preProcessedContent AS preProcessedContent,
+                    LENGTH(COALESCE(messageContent, '')) AS contentLength
+                   FROM chat_messages
+                   WHERE ${forwardWhere.sql}
+                     AND messageContent LIKE ?
+                   ORDER BY timestamp DESC, msgId ASC
+                   LIMIT ?`,
+                  [...forwardWhere.params, "[合并转发%", query.detailLimit]
+              )
+            : [];
+
+        return {
+            mediaSummary,
+            imageSamples,
+            audioSamples,
+            forwardMergedSummary: forwardMergedSummary ?? emptySnapshot.forwardMergedSummary,
+            forwardMergedSamples
+        };
+    }
+
+    private _normalizeMediaProcessingTypes(mediaTypes: MediaProcessingMediaType[]): MediaProcessingMediaType[] {
+        const normalizedTypes: MediaProcessingMediaType[] = [];
+
+        for (const mediaType of mediaTypes) {
+            if ((mediaType === "image" || mediaType === "audio") && !normalizedTypes.includes(mediaType)) {
+                normalizedTypes.push(mediaType);
+            }
+        }
+
+        return normalizedTypes;
+    }
+
+    private _buildMediaProcessingWhereClause(
+        query: MediaProcessingDiagnosisQuery,
+        mediaTypes: MediaProcessingMediaType[]
+    ): { sql: string; params: any[] } | null {
+        if (mediaTypes.length === 0) {
+            return null;
+        }
+
+        const whereParts = ["m.timestamp BETWEEN ? AND ?"];
+        const params: any[] = [query.timeStart, query.timeEnd];
+        const groupFilter = this._buildGroupFilter("m.groupId", query);
+
+        if (groupFilter === null) {
+            return null;
+        }
+
+        if (groupFilter.sql) {
+            whereParts.push(groupFilter.sql);
+            params.push(...groupFilter.params);
+        }
+
+        const mediaTypePlaceholders = mediaTypes.map(() => "?").join(", ");
+
+        whereParts.push(`m.mediaType IN (${mediaTypePlaceholders})`);
+        params.push(...mediaTypes);
+
+        return {
+            sql: whereParts.join(" AND "),
+            params
+        };
+    }
+
+    private _buildForwardMergedWhereClause(
+        query: MediaProcessingDiagnosisQuery
+    ): { sql: string; params: any[] } | null {
+        const whereParts = ["timestamp BETWEEN ? AND ?"];
+        const params: any[] = [query.timeStart, query.timeEnd];
+        const groupFilter = this._buildGroupFilter("groupId", query);
+
+        if (groupFilter === null) {
+            return null;
+        }
+
+        if (groupFilter.sql) {
+            whereParts.push(groupFilter.sql);
+            params.push(...groupFilter.params);
+        }
+
+        return {
+            sql: whereParts.join(" AND "),
+            params
+        };
+    }
+
+    private _buildGroupFilter(
+        columnName: string,
+        query: MediaProcessingDiagnosisQuery
+    ): { sql: string; params: string[] } | null {
+        if (query.groupIds !== undefined) {
+            const uniqueGroupIds = [...new Set(query.groupIds.filter(groupId => groupId.trim().length > 0))];
+
+            if (uniqueGroupIds.length === 0) {
+                return null;
+            }
+
+            return {
+                sql: `${columnName} IN (${uniqueGroupIds.map(() => "?").join(", ")})`,
+                params: uniqueGroupIds
+            };
+        }
+
+        if (query.groupId && query.groupId.trim().length > 0) {
+            return {
+                sql: `${columnName} = ?`,
+                params: [query.groupId]
+            };
+        }
+
+        return {
+            sql: "",
+            params: []
+        };
+    }
+
+    private _createEmptyMediaProcessingDiagnosisSnapshot(): MediaProcessingDiagnosisSnapshot {
+        return {
+            mediaSummary: [],
+            imageSamples: [],
+            audioSamples: [],
+            forwardMergedSummary: {
+                expandedMessageCount: 0,
+                parseFailurePlaceholderCount: 0,
+                emptyContentPlaceholderCount: 0,
+                nestedTruncatedCount: 0
+            },
+            forwardMergedSamples: []
+        };
     }
 
     /**

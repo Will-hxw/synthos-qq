@@ -9,7 +9,7 @@
                 "patchSQL": ""
             },
             "sourceReconcile": {
-                "enabled": false,
+                "enabled": true,
                 "batchSize": 50000
             },
             "groupFile": {

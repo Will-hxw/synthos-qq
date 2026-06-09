@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { GetChatMessagesByGroupIdSchema, GetQQAvatarSchema } from "../schemas/index";
+import {
+    GetChatMessagesByGroupIdSchema,
+    GetMediaProcessingDiagnosisSchema,
+    GetQQAvatarSchema
+} from "../schemas/index";
 
 describe("GetChatMessagesByGroupIdSchema", () => {
     it("应把字符串数字时间戳解析为 number", () => {
@@ -55,5 +59,63 @@ describe("GetQQAvatarSchema", () => {
         });
 
         expect(parsed).toEqual({ qqNumber: "123456", type: "group" });
+    });
+});
+
+describe("GetMediaProcessingDiagnosisSchema", () => {
+    it("应使用默认明细上限和默认媒体类型", () => {
+        const parsed = GetMediaProcessingDiagnosisSchema.parse({
+            timeStart: "1000",
+            timeEnd: "2000"
+        });
+
+        expect(parsed).toEqual({
+            groupId: undefined,
+            timeStart: 1000,
+            timeEnd: 2000,
+            detailLimit: 50,
+            mediaTypes: ["image", "audio"]
+        });
+    });
+
+    it("应把空 groupId 当作未指定群组", () => {
+        const parsed = GetMediaProcessingDiagnosisSchema.parse({
+            groupId: "",
+            timeStart: 1000,
+            timeEnd: 2000,
+            mediaTypes: ["audio"]
+        });
+
+        expect(parsed.groupId).toBeUndefined();
+        expect(parsed.mediaTypes).toEqual(["audio"]);
+    });
+
+    it("detailLimit 超过上限时应抛错", () => {
+        expect(() =>
+            GetMediaProcessingDiagnosisSchema.parse({
+                timeStart: 1000,
+                timeEnd: 2000,
+                detailLimit: 201
+            })
+        ).toThrow();
+    });
+
+    it("非法媒体类型应抛错", () => {
+        expect(() =>
+            GetMediaProcessingDiagnosisSchema.parse({
+                timeStart: 1000,
+                timeEnd: 2000,
+                mediaTypes: ["video"]
+            })
+        ).toThrow();
+    });
+
+    it("timeEnd 小于 timeStart 应抛错", () => {
+        expect(() =>
+            GetMediaProcessingDiagnosisSchema.parse({
+                timeStart: 2000,
+                timeEnd: 1000
+            })
+        ).toThrow("timeEnd必须大于等于timeStart");
     });
 });

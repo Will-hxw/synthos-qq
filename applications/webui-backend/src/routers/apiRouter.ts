@@ -128,6 +128,11 @@ export const setupApiRoutes = (app: Express): void => {
         asyncHandler((req, res) => setupStatusController.getDigestCoverage(req, res))
     );
 
+    app.post(
+        "/api/setup-status/media-processing-diagnosis",
+        asyncHandler((req, res) => setupStatusController.getMediaProcessingDiagnosis(req, res))
+    );
+
     // ==================== 兴趣度评分 ====================
     // 获取兴趣度计算结果
     app.post(

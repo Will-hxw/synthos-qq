@@ -109,6 +109,7 @@ describe("ImDbAccessService", () => {
             "图片文字",
             "pending",
             0,
+            null,
             expect.any(Number),
             expect.any(Number)
         ]);
@@ -146,6 +147,7 @@ describe("ImDbAccessService", () => {
         );
 
         expect(mediaInsertCall![1][17]).toBe("skipped");
+        expect(mediaInsertCall![1][19]).toBe("图片缺少可访问 URL 或本地缓存路径");
     });
 
     it("只有本地缓存路径的图片媒体入库时应标记为 pending", async () => {
@@ -293,10 +295,12 @@ describe("ImDbAccessService", () => {
             null,
             "pending",
             0,
+            null,
             expect.any(Number),
             expect.any(Number)
         ]);
         expect(mediaInsertCalls[1][1][17]).toBe("skipped");
+        expect(mediaInsertCalls[1][1][19]).toBe("语音缺少可定位的源文件路径");
     });
 
     it("应按群组、时间范围和 pending 状态查询待处理图片", async () => {
@@ -378,6 +382,76 @@ describe("ImDbAccessService", () => {
         expect(sql).toContain("m.status = 'pending'");
         expect(params).toEqual(["group-a", "group-b", 100, 200, 10]);
         expect(result[0].mediaId).toBe("msg-1:0");
+    });
+
+    it("媒体处理诊断应统计图片源 URL 和本地缓存路径可用性", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        mockCommonDBService.all
+            .mockResolvedValueOnce([
+                {
+                    mediaType: "image",
+                    status: "skipped",
+                    count: 3,
+                    latestUpdatedAt: 2000,
+                    failReasonSampleCount: 2,
+                    sourceUrlCount: 0,
+                    sourcePathCount: 0,
+                    missingSourceCount: 3
+                }
+            ])
+            .mockResolvedValueOnce([
+                {
+                    mediaId: "msg-1:0",
+                    msgId: "msg-1",
+                    groupId: "group-a",
+                    timestamp: 1000,
+                    status: "skipped",
+                    retryCount: 0,
+                    failReason: "图片缺少可访问 URL 或本地缓存路径",
+                    hasSourceUrl: false,
+                    hasSourcePath: false,
+                    sourceUrlKind: "none",
+                    ocrLen: 0,
+                    visionLen: 0,
+                    understandingLen: 0,
+                    modelName: null,
+                    messageContent: "[图片，暂无文字描述]",
+                    preProcessedContent: null
+                }
+            ])
+            .mockResolvedValueOnce([]);
+        mockCommonDBService.get.mockResolvedValue({
+            expandedMessageCount: 0,
+            parseFailurePlaceholderCount: 0,
+            emptyContentPlaceholderCount: 0,
+            nestedTruncatedCount: 0
+        });
+
+        const result = await service.getMediaProcessingDiagnosisSnapshot({
+            groupId: "group-a",
+            timeStart: 100,
+            timeEnd: 2000,
+            detailLimit: 5,
+            mediaTypes: ["image"]
+        });
+
+        const summarySql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const summaryParams = mockCommonDBService.all.mock.calls[0][1];
+        const imageSql = mockCommonDBService.all.mock.calls[1][0] as string;
+        const imageParams = mockCommonDBService.all.mock.calls[1][1];
+
+        expect(summarySql).toContain("sourceUrlCount");
+        expect(summarySql).toContain("sourcePathCount");
+        expect(summarySql).toContain("missingSourceCount");
+        expect(summaryParams).toEqual([100, 2000, "group-a", "image"]);
+        expect(imageSql).toContain("hasSourceUrl");
+        expect(imageSql).toContain("hasSourcePath");
+        expect(imageSql).toContain("sourceUrlKind");
+        expect(imageParams).toEqual([100, 2000, "group-a", "image", 5]);
+        expect(result.mediaSummary[0].missingSourceCount).toBe(3);
+        expect(result.imageSamples[0].sourceUrlKind).toBe("none");
     });
 
     it("更新图片理解结果时应写入结果字段并按需递增 retryCount", async () => {
