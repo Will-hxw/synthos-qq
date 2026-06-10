@@ -15,7 +15,7 @@ import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
 import sqlite3 from "@journeyapps/sqlcipher";
 
-import { IIMProvider } from "../contracts/IIMProvider";
+import { IQQSourceReconcileProvider } from "../contracts/IIMProvider";
 import { COMMON_TOKENS } from "../../di/tokens";
 
 import { GroupMsgColumn as GMC } from "./@types/mappers/GroupMsgColumn";
@@ -103,7 +103,9 @@ interface QQVoiceFileInfo {
  */
 @injectable()
 @mustInitBeforeUse
-export class QQProvider extends Disposable implements IIMProvider {
+export class QQProvider extends Disposable implements IQQSourceReconcileProvider {
+    public readonly sourceReconcileProviderType = "QQ";
+
     private db: PromisifiedSQLite | null = null;
     private filesInChatDb: PromisifiedSQLite | null = null;
     private richMediaDb: PromisifiedSQLite | null = null;
@@ -197,10 +199,14 @@ export class QQProvider extends Disposable implements IIMProvider {
         limit: number
     ): Promise<Omit<QQSourceMessagePage, "wrapped">> {
         const cursorTime = cursor ? Math.floor(cursor.timestamp / 1000) : 0;
+        const msgIdText = `CAST("${GMC.msgId}" AS TEXT)`;
+        const msgIdNumber = `CAST(${msgIdText} AS INTEGER)`;
         const cursorWhere = cursor
-            ? `AND ("${GMC.msgTime}" > ? OR ("${GMC.msgTime}" = ? AND CAST("${GMC.msgId}" AS TEXT) > ?))`
+            ? `AND ("${GMC.msgTime}" > ? OR ("${GMC.msgTime}" = ? AND (${msgIdNumber} > CAST(? AS INTEGER) OR (${msgIdNumber} = CAST(? AS INTEGER) AND ${msgIdText} > ?))))`
             : "";
-        const params = cursor ? [groupId, cursorTime, cursorTime, cursor.msgId, limit] : [groupId, limit];
+        const params = cursor
+            ? [groupId, cursorTime, cursorTime, cursor.msgId, cursor.msgId, cursor.msgId, limit]
+            : [groupId, limit];
         const sql = `
             SELECT
                 CAST("${GMC.msgId}" AS TEXT) AS "msgId",
@@ -210,7 +216,7 @@ export class QQProvider extends Disposable implements IIMProvider {
             AND "${GMC.peeruin}" = ?
             AND "${GMC.msgType}" IN (${RETAINED_QQ_MSG_TYPE_SQL_LIST})
             ${cursorWhere}
-            ORDER BY "${GMC.msgTime}" ASC, CAST("${GMC.msgId}" AS TEXT) ASC
+            ORDER BY "${GMC.msgTime}" ASC, ${msgIdNumber} ASC, ${msgIdText} ASC
             LIMIT ?
         `;
         const rows = (await this.db!.all(sql, params)) as Array<{ msgId: string; msgTime: number }>;

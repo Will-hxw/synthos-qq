@@ -1,5 +1,8 @@
 import "reflect-metadata";
-import type { QQProvider, QQSourceMessageCursor, QQSourceMessagePage } from "../providers/QQProvider/QQProvider";
+import type {
+    QQSourceMessageCursor,
+    QQSourceMessagePage
+} from "../providers/QQProvider/contracts/QQSourceMessagePage";
 
 import * as path from "path";
 
@@ -17,7 +20,7 @@ import {
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { KVStore } from "@root/common/util/KVStore";
 
-import { IIMProvider } from "../providers/contracts/IIMProvider";
+import { IIMProvider, IQQSourceReconcileProvider } from "../providers/contracts/IIMProvider";
 import { COMMON_TOKENS } from "../di/tokens";
 import { getQQProvider } from "../di/container";
 
@@ -102,19 +105,18 @@ export class ProvideDataTaskHandler {
 
                         let results: RawChatMessage[] = [];
 
-                        if (attrs.startTimeStamp < 0) {
-                            const newestMsg =
-                                await this.imDbAccessService.getNewestRawChatMessageByGroupId(groupId);
-                            const startTimeStamp = newestMsg ? newestMsg.timestamp - 1000 : 0; // 如果数据库中没有消息，则从时间戳0开始获取
+                        const startTimeStamp =
+                            attrs.startTimeStamp < 0
+                                ? await this._getIncrementalStartTimeStamp(groupId)
+                                : attrs.startTimeStamp;
 
-                            results = await activeProvider.getMsgByTimeRange(
-                                startTimeStamp,
-                                attrs.endTimeStamp,
-                                groupId
+                        if (startTimeStamp > attrs.endTimeStamp) {
+                            this.LOGGER.warning(
+                                `群 ${groupId} 的消息拉取起始时间 ${startTimeStamp} 晚于结束时间 ${attrs.endTimeStamp}，已跳过本轮时间范围拉取。`
                             );
                         } else {
                             results = await activeProvider.getMsgByTimeRange(
-                                attrs.startTimeStamp,
+                                startTimeStamp,
                                 attrs.endTimeStamp,
                                 groupId
                             );
@@ -152,17 +154,24 @@ export class ProvideDataTaskHandler {
         );
     }
 
-    private _isQQSourceReconcileProvider(provider: IIMProvider): provider is QQProvider {
-        const candidate = provider as QQProvider;
+    private async _getIncrementalStartTimeStamp(groupId: string): Promise<number> {
+        const newestMsg = await this.imDbAccessService.getNewestRawChatMessageByGroupId(groupId);
+
+        return newestMsg ? newestMsg.timestamp - 1000 : 0;
+    }
+
+    private _isQQSourceReconcileProvider(provider: IIMProvider): provider is IQQSourceReconcileProvider {
+        const candidate = provider as Partial<IQQSourceReconcileProvider>;
 
         return (
+            candidate.sourceReconcileProviderType === "QQ" &&
             typeof candidate.getBusinessMsgIdPageAfterCursor === "function" &&
             typeof candidate.getMsgsByMsgIds === "function"
         );
     }
 
     private async _reconcileQQSourceMessages(
-        provider: QQProvider,
+        provider: IQQSourceReconcileProvider,
         cursorStore: KVStore<QQSourceReconcileStoreValue>,
         groupId: string,
         batchSize: number

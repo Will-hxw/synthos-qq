@@ -17,6 +17,7 @@ const {
     const save = vi.fn().mockResolvedValue(undefined);
     const unique = vi.fn(() => ({ save }));
     const qqProvider = {
+        sourceReconcileProviderType: "QQ",
         init: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         getMsgByTimeRange: vi.fn(),
@@ -110,6 +111,7 @@ describe("ProvideDataTaskHandler", () => {
         mockImDbAccessService.storeRawChatMessages.mockResolvedValue(undefined);
         mockImDbAccessService.getNewestRawChatMessageByGroupId.mockResolvedValue(null);
         mockImDbAccessService.getExistingRawChatMessageIds.mockResolvedValue(new Set<string>());
+        mockQQProvider.sourceReconcileProviderType = "QQ";
         mockQQProvider.init.mockResolvedValue(undefined);
         mockQQProvider.dispose.mockResolvedValue(undefined);
         mockQQProvider.getMsgByTimeRange.mockResolvedValue([]);
@@ -154,6 +156,23 @@ describe("ProvideDataTaskHandler", () => {
                 reachedEnd: true
             })
         );
+    });
+
+    it("增量起始时间晚于结束时间时应跳过时间范围拉取并保留对账", async () => {
+        mockImDbAccessService.getNewestRawChatMessageByGroupId.mockResolvedValue({
+            timestamp: 50_000
+        });
+
+        await runProvideDataJob({
+            groupIds: ["group-a"],
+            startTimeStamp: -1,
+            endTimeStamp: 30_000
+        });
+
+        expect(mockQQProvider.getMsgByTimeRange).not.toHaveBeenCalled();
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("晚于结束时间"));
+        expect(mockImDbAccessService.storeRawChatMessages).toHaveBeenNthCalledWith(1, []);
+        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).toHaveBeenCalledWith("group-a", null, 50000);
     });
 
     it("历史补漏应只回源解析缺失 msgId 并推进游标", async () => {
@@ -294,6 +313,20 @@ describe("ProvideDataTaskHandler", () => {
         expect(mockQQProvider.getMsgsByMsgIds).not.toHaveBeenCalled();
         expect(mockCursorStore.put).not.toHaveBeenCalled();
         expect(mockCursorStore.del).not.toHaveBeenCalled();
+    });
+
+    it("缺少 QQ 对账接口标记时不应仅凭同名方法启用原库回填", async () => {
+        mockQQProvider.sourceReconcileProviderType = "unknown";
+
+        await runProvideDataJob({
+            groupIds: ["group-a"],
+            startTimeStamp: 1_000,
+            endTimeStamp: 30_000
+        });
+
+        expect(mockKVStoreConstructor).not.toHaveBeenCalled();
+        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).not.toHaveBeenCalled();
+        expect(mockQQProvider.getMsgsByMsgIds).not.toHaveBeenCalled();
     });
 
     async function runProvideDataJob(data: {

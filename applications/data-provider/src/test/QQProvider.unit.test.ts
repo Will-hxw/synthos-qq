@@ -1446,8 +1446,20 @@ describe("QQProvider", () => {
             const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
 
             expect(sqlCall).toContain(`"${GMC.peeruin}" = ?`);
+            expect(sqlCall).toContain(`CAST(CAST("${GMC.msgId}" AS TEXT) AS INTEGER) > CAST(? AS INTEGER)`);
+            expect(sqlCall).toContain(
+                `ORDER BY "${GMC.msgTime}" ASC, CAST(CAST("${GMC.msgId}" AS TEXT) AS INTEGER) ASC, CAST("${GMC.msgId}" AS TEXT) ASC`
+            );
             expect(sqlCall).toContain(`"${GMC.msgType}" IN`);
-            expect(paramsCall).toEqual([mockGroupId, 1699999999, 1699999999, "msg-before", 2]);
+            expect(paramsCall).toEqual([
+                mockGroupId,
+                1699999999,
+                1699999999,
+                "msg-before",
+                "msg-before",
+                "msg-before",
+                2
+            ]);
             expect(result).toEqual({
                 messages: [
                     { msgId: "msg-a", timestamp: 1700000000000 },
