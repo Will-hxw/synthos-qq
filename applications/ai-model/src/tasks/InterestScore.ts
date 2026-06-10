@@ -8,6 +8,7 @@ import { ConfigManagerService } from "@root/common/services/config/ConfigManager
 import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 import { InterestScoreDbAccessService } from "@root/common/services/database/InterestScoreDbAccessService";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
+import { retryAsync } from "@root/common/util/retryAsync";
 
 import { SemanticRater } from "../misc/SemanticRater";
 import { EmbeddingService } from "../services/embedding/EmbeddingService";
@@ -49,20 +50,35 @@ export class InterestScoreTaskHandler {
 
                 config = await this.configManagerService.getCurrentConfig(); // 刷新配置
 
-                const embeddingStatus = await this.embeddingService.getAvailability();
+                // 检查 Ollama 服务可用性（带重试）
+                try {
+                    await retryAsync(
+                        async () => {
+                            const embeddingStatus = await this.embeddingService.getAvailability();
 
-                if (!embeddingStatus.ollamaReachable) {
-                    this.LOGGER.error(`Ollama 服务不可用，跳过当前任务：${embeddingStatus.error ?? "未知错误"}`);
+                            if (!embeddingStatus.ollamaReachable) {
+                                throw new Error(`Ollama 服务不可达：${embeddingStatus.error ?? "未知错误"}`);
+                            }
 
-                    return;
-                }
-
-                if (!embeddingStatus.modelInstalled) {
-                    this.LOGGER.error(
-                        `Ollama embedding 模型未安装，跳过当前任务：${embeddingStatus.model}。请执行 ollama pull ${embeddingStatus.model}`
+                            if (!embeddingStatus.modelInstalled) {
+                                throw new Error(
+                                    `Ollama embedding 模型未安装：${embeddingStatus.model}。请执行 ollama pull ${embeddingStatus.model}`
+                                );
+                            }
+                        },
+                        {
+                            maxRetries: 3,
+                            retryDelayMs: 10000,
+                            taskName: "Ollama 可用性检查"
+                        }
                     );
 
-                    return;
+                    this.LOGGER.success(`Ollama 服务可用，模型: ${config.ai.embedding.model}`);
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+
+                    this.LOGGER.error(`Ollama 服务不可用，重试已耗尽：${errorMessage}`);
+                    throw error; // 抛出异常让 Agenda 感知到任务失败
                 }
 
                 const groupIds = Object.keys(config.groupConfigs);

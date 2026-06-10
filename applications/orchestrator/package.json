@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --build",
-    "dev": "node ../../scripts/devRunner.cjs --name orchestrator --entry dist/index.js --watch src",
+    "dev": "node ../../scripts/devRunner.cjs --name orchestrator --entry dist/index.js --watch src --no-common",
     "dev:build": "rimraf tsconfig.tsbuildinfo && pnpm run build && node ../../scripts/redirectRequire.js && node ../../scripts/fixESMExtensions.mjs && node dist/index.js"
   },
   "keywords": [],

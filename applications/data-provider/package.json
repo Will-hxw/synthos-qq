@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc --build && node scripts/copyProtoAssets.cjs",
     "copy:assets": "node scripts/copyProtoAssets.cjs",
-    "dev": "node ../../scripts/devRunner.cjs --name data-provider --entry dist/index.js --watch src",
+    "dev": "node ../../scripts/devRunner.cjs --name data-provider --entry dist/index.js --watch src --no-common",
     "dev:build": "rimraf tsconfig.tsbuildinfo && pnpm run build && node ../../scripts/redirectRequire.js && node ../../scripts/fixESMExtensions.mjs && node dist/index.js"
   },
   "keywords": [],
