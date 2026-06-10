@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require("fs");
+const { execFileSync } = require("child_process");
 const http = require("http");
 const net = require("net");
 const path = require("path");
@@ -15,6 +16,9 @@ const DIST_DIR = path.resolve(
 );
 const BACKEND_HOST = process.env.SYNTHOS_WEBUI_BACKEND_HOST || "127.0.0.1";
 const BACKEND_PORT = Number(process.env.SYNTHOS_WEBUI_BACKEND_PORT || "3002");
+const CURRENT_PID = process.pid;
+const PREVIEW_SCRIPT_NAME = "startPublicPreviewServer.cjs";
+const PORT_CLEANUP_TIMEOUT_MS = 8000;
 
 const LONG_CACHE = "public, max-age=31536000, immutable";
 const NO_CACHE = "no-cache";
@@ -48,6 +52,173 @@ const COMPRESSIBLE_EXTENSIONS = new Set([".html", ".js", ".css", ".json", ".svg"
 
 function log(message) {
     console.log(`[public-preview] ${message}`);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeProcessList(raw) {
+    if (!raw) {
+        return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    const dedupedByPid = new Map();
+
+    for (const item of list) {
+        const pid = Number(item.pid);
+
+        if (!Number.isFinite(pid) || pid <= 0) {
+            continue;
+        }
+
+        if (!dedupedByPid.has(pid)) {
+            dedupedByPid.set(pid, {
+                pid,
+                commandLine: String(item.commandLine || ""),
+                executablePath: String(item.executablePath || "")
+            });
+        }
+    }
+
+    return [...dedupedByPid.values()];
+}
+
+function getListeningProcessesOnWindows(port) {
+    const command = `
+$ErrorActionPreference = 'SilentlyContinue'
+$connections = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue
+$connections | ForEach-Object {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+        pid = $_.OwningProcess
+        commandLine = $process.CommandLine
+        executablePath = $process.ExecutablePath
+    }
+} | ConvertTo-Json -Compress
+`;
+
+    try {
+        const raw = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", command], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"]
+        }).trim();
+
+        return normalizeProcessList(raw);
+    } catch {
+        return [];
+    }
+}
+
+function getCommandLineOnUnix(pid) {
+    try {
+        return execFileSync("ps", ["-p", String(pid), "-o", "args="], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"]
+        }).trim();
+    } catch {
+        return "";
+    }
+}
+
+function getListeningProcessesOnUnix(port) {
+    try {
+        const raw = execFileSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"]
+        }).trim();
+
+        return raw
+            .split("\n")
+            .map(line => line.trim())
+            .filter(line => line.startsWith("p"))
+            .map(line => Number(line.slice(1)))
+            .filter(pid => Number.isFinite(pid) && pid > 0)
+            .filter((pid, index, pids) => pids.indexOf(pid) === index)
+            .map(pid => ({
+                pid,
+                commandLine: getCommandLineOnUnix(pid),
+                executablePath: ""
+            }));
+    } catch {
+        return [];
+    }
+}
+
+function getListeningProcesses(port) {
+    if (process.platform === "win32") {
+        return getListeningProcessesOnWindows(port);
+    }
+
+    return getListeningProcessesOnUnix(port);
+}
+
+function isPreviewServerProcess(processInfo) {
+    return processInfo.commandLine.includes(PREVIEW_SCRIPT_NAME);
+}
+
+function stopProcess(pid) {
+    if (pid === CURRENT_PID) {
+        return;
+    }
+
+    try {
+        process.kill(pid);
+    } catch (error) {
+        if (error?.code !== "ESRCH") {
+            throw error;
+        }
+    }
+}
+
+async function waitForPortFree(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+        const listeners = getListeningProcesses(port).filter(item => item.pid !== CURRENT_PID);
+
+        if (listeners.length === 0) {
+            return true;
+        }
+
+        await sleep(200);
+    }
+
+    return getListeningProcesses(port).filter(item => item.pid !== CURRENT_PID).length === 0;
+}
+
+async function cleanupExistingPreviewServer() {
+    const listeners = getListeningProcesses(PORT).filter(item => item.pid !== CURRENT_PID);
+
+    if (listeners.length === 0) {
+        return true;
+    }
+
+    const previewProcesses = listeners.filter(isPreviewServerProcess);
+    const otherProcesses = listeners.filter(item => !isPreviewServerProcess(item));
+
+    if (otherProcesses.length > 0) {
+        for (const processInfo of otherProcesses) {
+            log(`端口 ${PORT} 已被其他进程占用，pid=${processInfo.pid}，命令=${processInfo.commandLine || "未知"}`);
+        }
+
+        return false;
+    }
+
+    for (const processInfo of previewProcesses) {
+        log(`发现旧的静态预览服务，准备清理 pid=${processInfo.pid}`);
+        stopProcess(processInfo.pid);
+    }
+
+    const portFree = await waitForPortFree(PORT, PORT_CLEANUP_TIMEOUT_MS);
+
+    if (!portFree) {
+        log(`旧的静态预览服务清理后端口 ${PORT} 仍被占用`);
+    }
+
+    return portFree;
 }
 
 function isProxyPath(pathname) {
@@ -276,8 +447,33 @@ server.timeout = 0;
 server.headersTimeout = 0;
 server.keepAliveTimeout = 0;
 server.on("upgrade", proxyUpgrade);
-server.listen(PORT, HOST, () => {
-    log(`静态预览服务已启动: http://${HOST}:${PORT}`);
-    log(`静态目录: ${DIST_DIR}`);
-    log(`后端代理: http://${BACKEND_HOST}:${BACKEND_PORT}`);
+
+server.on("error", error => {
+    if (error?.code === "EADDRINUSE") {
+        log(`端口 ${PORT} 已被占用，静态预览服务无法启动。请释放该端口，或设置 SYNTHOS_PUBLIC_PREVIEW_PORT 使用其他端口。`);
+        process.exit(1);
+    }
+
+    log(`静态预览服务启动失败: ${error?.message || String(error)}`);
+    process.exit(1);
+});
+
+async function main() {
+    const canStart = await cleanupExistingPreviewServer();
+
+    if (!canStart) {
+        log(`静态预览服务未启动: ${HOST}:${PORT} 不可用`);
+        process.exit(1);
+    }
+
+    server.listen(PORT, HOST, () => {
+        log(`静态预览服务已启动: http://${HOST}:${PORT}`);
+        log(`静态目录: ${DIST_DIR}`);
+        log(`后端代理: http://${BACKEND_HOST}:${BACKEND_PORT}`);
+    });
+}
+
+main().catch(error => {
+    log(`静态预览服务启动失败: ${error?.message || String(error)}`);
+    process.exit(1);
 });
