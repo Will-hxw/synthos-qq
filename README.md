@@ -11,8 +11,6 @@
   <a href="#-贡献指南"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
 </p>
 
-> 📌 本项目基于 [g122622/synthos](https://github.com/g122622/synthos) 进行开发。
-
 ---
 
 <!-- TOC: 可使用 GitHub 左上角 "Table of Contents" 按钮快速导航 -->
