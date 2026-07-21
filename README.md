@@ -1,7 +1,7 @@
 <p align="center">
-  <h1 align="center">🔬 Synthos-QQ</h1>
-  <p align="center"><strong>智能聊天记录全链路分析系统</strong></p>
-  <p align="center">从原始 QQ 聊天记录导入 → 上下文理解 → AI 摘要 → 兴趣度排行 → 可视化日报，一站式全链路数据分析 </p>
+  <h1 align="center">Synthos</h1>
+  <p align="center"><strong>Agentic Retrieval for Instant Messaging</strong></p>
+  <p align="center">面向即时通信群聊消息的 Agentic 检索与知识整合系统</p>
 </p>
 
 <p align="center">
@@ -11,13 +11,41 @@
   <a href="#-贡献指南"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
 </p>
 
+> 本项目基于 [g122622/synthos](https://github.com/g122622/synthos) 进行开发。
+
 ---
 
-<!-- TOC: 可使用 GitHub 左上角 "Table of Contents" 按钮快速导航 -->
+## 解决的问题
+
+IM 群聊消息天然碎片化：话题在多轮对话中交织演进，有价值的信息分散在不同时段、不同群组中，事后回溯和跨时段关联极为困难。传统关键词搜索只能匹配字面，无法理解语义，更无法还原事件上下文和话题演化脉络。
+
+Synthos 以 Agentic Retrieval 为核心思路，将 LLM 的意图理解能力与向量检索的语义匹配能力结合，在消息、事件、主题三个层级上组织知识，让用户能够围绕任意兴趣点获取整合后的信息、还原事件全貌、追踪话题从产生到消亡的完整过程。
+
+---
+
+## 核心能力
+
+### 检索链路
+
+查询规划、混合召回、相关性重排、上下文构建四阶段流水线。Agent 首先识别用户问题的意图类型，生成时间范围、群组范围、话题关键词等结构化约束。在召回阶段，基于 bge-m3 同时执行稠密向量检索与稀疏关键词检索，覆盖语义相近和精确匹配两类场景。候选结果经 reranker 对查询与文档的深度语义匹配打分，筛选高相关片段并按时间线和话题归属聚合跨时段证据，最终组装为结构化上下文送入生成模型。
+
+### Agent 工具系统
+
+语义检索、结构化 SQL 筛选、话题追踪和摘要生成以可调用工具形式封装，Agent 在多轮对话中自主决定调用哪些工具及调用顺序。系统在每个检索步骤后评估证据充分性：当已获取的信息不足以支撑可靠结论，或不同来源存在明显冲突时，Agent 自动改写查询、放宽或收紧约束，迭代检索直至证据充分或达到搜索上限。最终输出包含原始消息定位引用的回答，每条结论可追溯到具体消息。
+
+### 知识组织与增量更新
+
+以消息为原始数据单元，预处理阶段按时间和语义边界将消息聚合为事件会话，AI 摘要阶段从每个会话中抽取结构化话题。消息、事件、主题三层逐级抽象，形成可检索的知识图谱。任务编排系统按固定周期驱动数据同步、会话划分、摘要生成、向量索引更新和周期性知识合成，保证新入库消息在经过完整链路后即可被检索和问答覆盖。
+
+### WebUI
+
+React SPA 提供搜索问答界面、话题浏览、兴趣度排行、日报生成和可视化配置面板。Agent 对话支持流式 SSE 输出与工具调用过程实时展示，搜索结果按相关度排序并标注来源消息时间与群组。
+
+---
 
 ## 🚀 快速开始
 
-> **前提：** 已安装 [Node.js](https://nodejs.org/)（≥ v20）、[pnpm](https://pnpm.io/)、[MongoDB](https://www.mongodb.com/try/download/community) 和 [Ollama](https://ollama.com/)。
+**前提：** 已安装 [Node.js](https://nodejs.org/)（≥ v20）、[pnpm](https://pnpm.io/)、[MongoDB](https://www.mongodb.com/try/download/community) 和 [Ollama](https://ollama.com/)。
 
 ```bash
 # 1. 克隆项目
@@ -29,7 +57,7 @@ pnpm install
 
 # 3. 创建配置文件
 cp synthos_config.example.json synthos_config.json
-# 🔴 编辑 synthos_config.json，填入你的 LLM API Key 等必要配置
+# 编辑 synthos_config.json，填入 LLM API Key 等必要配置
 
 # 4. 下载 Embedding 模型
 ollama pull bge-m3
@@ -42,7 +70,7 @@ run.bat
 bash run.sh
 ```
 
-启动后访问 **`http://localhost:3011`** 即可看到 WebUI。若“最新话题”或“群组管理”为空，可查看空态中的启动状态提示，或直接访问后端诊断接口 **`http://localhost:3002/api/setup-status`**。
+启动后访问 **`http://localhost:3011`** 即可看到 WebUI。若最新话题或群组管理为空，可查看空态中的启动状态提示，或直接访问后端诊断接口 **`http://localhost:3002/api/setup-status`**。
 
 ### 项目截图
 
@@ -55,31 +83,43 @@ bash run.sh
 
 ---
 
-## ✨ 功能特性
-
-| 功能 | 说明 |
-|------|------|
-| 🤖 **AI 摘要生成** | 基于云端/本地 LLM 自动生成高质量对话摘要 |
-| 📊 **兴趣度指数** | 自定义正/负向关键词，系统为每个话题智能打分排序 |
-| 🔍 **语义搜索** | 基于 `bge-m3` 向量嵌入的全文语义检索（RAG） |
-| 💬 **Agent 问答** | WebUI 内置 AI Agent，支持流式 SSE 输出与工具调用 |
-| 📰 **日报自动生成** | 半日/周/月报自动生成，支持邮件推送 |
-| 📥 **历史记录拉取** | 自动增量同步 QQ 聊天记录，支持历史回溯 |
-| 👥 **多群组管理** | 灵活配置不同群组的分析策略与 AI 模型 |
-| ⚙️ **可视化配置面板** | WebUI 内置配置编辑器，支持 Schema 校验 |
-
----
-
 ## 🏗 系统架构
 
 ![系统架构图](./docs/assets/Synthos架构7.drawio.png)
 
-### 数据流
+### 检索与问答数据流
+
+```
+用户查询
+  │
+  ▼
+[Agent 意图识别] ── 生成时间/群组/话题约束
+  │
+  ▼
+[查询改写与扩展] ── 多角度重述，提升召回覆盖
+  │
+  ▼
+[混合召回] ── bge-m3 稠密向量 + 结构化筛选
+  │
+  ▼
+[相关性重排] ── 深度语义匹配打分
+  │
+  ▼
+[上下文构建] ── 按时间线聚合，注入消息来源
+  │
+  ▼
+[证据充分性判定] ── 不足时改写查询迭代检索
+  │
+  ▼
+[答案生成] ── 带原始消息定位的回答
+```
+
+### 数据处理流水线
 
 ```
 QQ 本地数据库 → [data-provider] → [preprocessing] → [ai-model] → [webui-backend] → [webui-frontend]
                                      │                    │
-                                     └─ 清洗/分组/拼接 ───┴─ 摘要/向量化/兴趣度/日报
+                                     └─ 会话划分/上下文拼接 ─┴─ 摘要/向量化/兴趣度/检索
 ```
 
 ### 模块职责
@@ -87,26 +127,37 @@ QQ 本地数据库 → [data-provider] → [preprocessing] → [ai-model] → [w
 | 模块 | 端口 | 职责 |
 |------|------|------|
 | `data-provider` | — | 从 QQ 本地数据库读取原始聊天记录（Windows / macOS ARM） |
-| `preprocessing` | — | 清洗、分组、上下文拼接、引用消息解析 |
-| `ai-model` | `7979` | 文本向量化、摘要生成、兴趣度计算、RAG 检索 |
-| `orchestrator` | — | Pipeline 调度器，按时序编排各数据处理任务 |
+| `preprocessing` | — | 消息清洗、会话划分、上下文拼接、引用消息解析 |
+| `ai-model` | `7979` | 文本向量化、摘要生成、语义检索、Agent 对话、兴趣度计算 |
+| `orchestrator` | — | 流水线调度器，按时序编排数据处理任务和索引更新 |
 | `webui-backend` | `3002` | RESTful API 服务，群组管理、消息查询、配置管理 |
 | `webui-frontend` | `3011` | React SPA，数据可视化与交互界面 |
 | `webui-forwarder` | — | 内网穿透转发（可选，调试用） |
+
+### 知识组织层级
+
+```
+Message ──► Event (Session) ──► Topic
+  原始消息       会话聚合          结构化话题
+                                  │
+                                  ├── 向量嵌入 (bge-m3, 1024d)
+                                  ├── 兴趣度评分
+                                  └── 时间线归属
+```
 
 ---
 
 ## 📋 环境要求
 
-| 依赖 | 版本要求 | 用途 | 必需？ |
-|------|----------|------|--------|
+| 依赖 | 版本要求 | 用途 | 必需 |
+|------|----------|------|------|
 | **Node.js** | ≥ v20（推荐 `v24.5.0`） | 运行时 | ✅ |
 | **pnpm** | `10.15.0` | 包管理器 | ✅ |
-| **MongoDB** | ≥ 7.0 | 任务调度（Agenda）| ✅ |
+| **MongoDB** | ≥ 7.0 | 任务调度（Agenda） | ✅ |
 | **Ollama** | 最新版 | 本地 Embedding 模型服务 | ✅ |
 | **bge-m3** | — | 1024 维向量嵌入模型 | ✅ |
 
-> **注意：** `data-provider` 模块支持 Windows x86_64 和 macOS Apple Silicon（需 QQ NT 桌面版）。Linux 暂未支持，可跳过此模块使用其他功能。
+`data-provider` 模块支持 Windows x86_64 和 macOS Apple Silicon（需 QQ NT 桌面版）。Linux 暂未支持，可跳过此模块使用其他功能。
 
 ---
 
@@ -132,7 +183,7 @@ corepack prepare pnpm@10.15.0 --activate
 
 下载并安装 [MongoDB Community Edition](https://www.mongodb.com/try/download/community)，确保服务运行在 `localhost:27017`。
 
-> 如果你的 MongoDB 使用不同地址，可通过 `SYNTHOS_MONGODB_URL` 环境变量覆盖（见[环境变量](#-环境变量)表格）。
+如果你的 MongoDB 使用不同地址，可通过 `SYNTHOS_MONGODB_URL` 环境变量覆盖（见[环境变量](#-环境变量)表格）。
 
 ### 3. 安装 Ollama 与 Embedding 模型
 
@@ -157,9 +208,10 @@ curl http://localhost:11434/api/tags
 ```bash
 cp synthos_config.example.json synthos_config.json
 ```
+
 完整字段格式参考：[`common/services/config/schemas/GlobalConfig.ts`](./common/services/config/schemas/GlobalConfig.ts)。
 
-> **配置面板不会自动创建主配置文件。** 首次使用仍需先复制 `synthos_config.example.json`。如果 `synthos_config.json` 缺失、JSON 格式错误或模型引用无效，配置面板会显示明确错误；修复后可继续使用 `pnpm dev:config` 可视化编辑。
+配置面板不会自动创建主配置文件。首次使用仍需先复制 `synthos_config.example.json`。如果 `synthos_config.json` 缺失、JSON 格式错误或模型引用无效，配置面板会显示明确错误；修复后可继续使用 `pnpm dev:config` 可视化编辑。
 
 ### 5. 配置 LLM 模型
 
@@ -195,11 +247,11 @@ cp synthos_config.example.json synthos_config.json
 }
 ```
 
-> 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。`reasoning.enabled` 默认关闭；只有确认上游模型支持对应参数时才开启。
+兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。`reasoning.enabled` 默认关闭；只有确认上游模型支持对应参数时才开启。
 
 ### 6. 配置图片理解（可选）
 
-图片理解默认关闭。启用后，系统会在 `ProvideData` 后异步处理新入库图片：先用 OCR.space 提取文字，再用 DashScope OpenAI-compatible 视觉模型生成中文理解文本，最终仍以纯文本进入摘要上下文。系统只保存 QQ 原始图片 URL 和元信息，不缓存原图、不保存 base64。
+图片理解默认关闭。启用后，系统会在数据同步后异步处理新入库图片：先用 OCR.space 提取文字，再用 DashScope OpenAI-compatible 视觉模型生成中文理解文本，最终仍以纯文本进入摘要上下文。系统只保存 QQ 原始图片 URL 和元信息，不缓存原图、不保存 base64。
 
 ```json
 {
@@ -264,20 +316,20 @@ cp synthos_config.example.json synthos_config.json
 | 字段 | 说明 |
 |------|------|
 | `VFSExtPath` | SQLite VFS 扩展路径，项目内置 `win_x86`（`.dll`）和 `mac_arm64`（`.dylib`）两个版本 |
-| `dbBasePath` | QQ 本地数据库目录，不同操作系统路径不同，具体情况具体分析 |
+| `dbBasePath` | QQ 本地数据库目录，不同操作系统路径不同 |
 | `dbKey` | QQ 数据库加密密钥 |
 | `sourceReconcile.enabled` | 是否启用 QQ 原库回填；设为 `false` 时跳过原库扫描 |
 | `sourceReconcile.batchSize` | QQ 原库每个群每轮扫描的业务消息数量，默认 50000，最大 50000；`enabled=false` 时可为 0 |
 | `groupFile.includePathInMessageContent` | 是否在群文件消息正文中追加完整文件路径，用于本地排查 |
 
-历史数据是分批渐进处理的：`dataProviders.QQ.sourceReconcile.enabled` 控制是否启用 QQ 原库扫描；启用时 `dataProviders.QQ.sourceReconcile.batchSize` 控制每轮从 QQ 原库扫描多少业务消息，`preprocessors.historicalBackfill.messageLimit` 控制每轮对已落库但尚未分配 `sessionId` 的历史消息做多少候选回填，默认 10000。
+历史数据分批渐进处理：`dataProviders.QQ.sourceReconcile.enabled` 控制是否启用 QQ 原库扫描；启用时 `dataProviders.QQ.sourceReconcile.batchSize` 控制每轮从 QQ 原库扫描多少业务消息，`preprocessors.historicalBackfill.messageLimit` 控制每轮对已落库但尚未分配 `sessionId` 的历史消息做多少候选回填，默认 10000。
 
 **数据库密钥获取方式：**
 
 - **Windows**：可直接使用 `QQDatabaseKey.exe`。在 QQ 已登录状态下运行 `QQDatabaseKey.exe`，程序会自动退出 QQ；此时重新登录 QQ，程序会获取数据库密钥并写入 `password.txt`，从该文件复制密钥填入 `dbKey`。
 - **其他操作系统**：沿用原参考资料获取：[QQ 数据库密钥文档](https://docs.aaqwq.top/)、[qq-win-db-key](https://github.com/QQBackup/qq-win-db-key)。
 
-> ⚠️ `data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
+`data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
 
 ### 8. 配置群组
 
@@ -318,13 +370,13 @@ bash run.sh
 
 | 命令 | 包含的服务 | 适用场景 |
 |------|-----------|----------|
-| `pnpm dev:all` | 全部 6 个服务 | **完整开发环境** |
+| `pnpm dev:all` | 全部 6 个服务 | 完整开发环境 |
 | `pnpm dev:backend` | orchestrator, preprocessing, ai-model, data-provider, webui-backend | 仅后端开发 |
 | `pnpm dev:webui` | ai-model, webui-backend, webui-frontend | 前端 + AI 开发 |
-| `pnpm dev:config` | webui-backend (配置模式), webui-frontend | **可视化配置面板** |
+| `pnpm dev:config` | webui-backend (配置模式), webui-frontend | 可视化配置面板 |
 | `pnpm dev:public-preview` | 全部服务 + 静态预览 + 公网转发 | 公网演示 |
 
-> 除 `pnpm dev:config` 外，所有命令启动前会自动检查 MongoDB 是否可达。
+除 `pnpm dev:config` 外，所有命令启动前会自动检查 MongoDB 是否可达。
 
 ### 服务端口
 
@@ -338,11 +390,11 @@ bash run.sh
 
 ---
 
-## 🐳 Docker 部署（不成熟）
+## 🐳 Docker 部署
 
 项目提供 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端。
 
-> ⚠️ Docker 模式默认不会抓取 QQ 数据。`data-provider` 必须在宿主机单独启动，因为它需要访问宿主机 QQ NT 数据库和平台特定 VFS 插件。只执行 `docker compose up -d` 时，WebUI 可以打开，但不会自动导入新的 QQ 消息。
+Docker 模式默认不会抓取 QQ 数据。`data-provider` 必须在宿主机单独启动，因为它需要访问宿主机 QQ NT 数据库和平台特定 VFS 插件。只执行 `docker compose up -d` 时，WebUI 可以打开，但不会自动导入新的 QQ 消息。
 
 ### 前置条件
 
@@ -356,7 +408,7 @@ bash run.sh
 cp docker/config/synthos_config.docker.example.json docker/config/synthos_config.json
 
 # 2. 编辑配置，填入 LLM API Key（其余字段已针对 Docker 环境预配置好）
-#    🔴 必改：ai.models.<name>.apiKey 和 ai.defaultModelConfig.apiKey
+#    必改：ai.models.<name>.apiKey 和 ai.defaultModelConfig.apiKey
 
 # 3. 启动全部服务
 docker compose up -d
@@ -403,7 +455,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | WebUI Frontend (Nginx) | `synthos-webui-frontend` | `8080` |
 | Ollama（需 `--profile ollama`） | `synthos-ollama` | `11434` |
 
-> Docker 部署仍受 `data-provider` 的宿主机约束影响：QQ NT 数据库目录、数据库密钥和 SQLite VFS 原生扩展必须来自宿主机环境。仅部署 WebUI、后端、AI Model 和 MongoDB 不会自动产生 QQ 聊天数据；需要确认 `dataProviders.QQ.dbBasePath`、`VFSExtPath` 和挂载路径都指向真实可读位置。
+Docker 部署仍受 `data-provider` 的宿主机约束影响：QQ NT 数据库目录、数据库密钥和 SQLite VFS 原生扩展必须来自宿主机环境。仅部署 WebUI、后端、AI Model 和 MongoDB 不会自动产生 QQ 聊天数据；需要确认 `dataProviders.QQ.dbBasePath`、`VFSExtPath` 和挂载路径都指向真实可读位置。
 
 ### 数据持久化
 
@@ -415,7 +467,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | `./docker/volumes/mongo/` | `/data/db` | MongoDB 数据 |
 | `./docker/volumes/ollama/` | `/root/.ollama` | Ollama 模型文件 |
 
-> ⚠️ `data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件）。Docker Compose 中的 `data-provider` 只是 host-only 占位说明，真实抓取必须按上面的宿主机命令启动。
+`data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件）。Docker Compose 中的 `data-provider` 只是 host-only 占位说明，真实抓取必须按上面的宿主机命令启动。
 
 ---
 
@@ -471,7 +523,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | `GET/POST` | `/api/config/override` | Override 配置读写 |
 | `POST` | `/api/config/validate` | 配置校验 |
 
-> 前端开发指引详见 [`docs/接口文档/前端开发指引文档.md`](./docs/接口文档/前端开发指引文档.md)。
+前端开发指引详见 [`docs/接口文档/前端开发指引文档.md`](./docs/接口文档/前端开发指引文档.md)。
 
 ---
 
@@ -480,11 +532,11 @@ docker exec -it synthos-ollama ollama pull bge-m3
 ```
 synthos/
 ├── applications/
-│   ├── ai-model/          # AI 模型服务：摘要、向量化、兴趣度、RAG
+│   ├── ai-model/          # AI 模型服务：向量化、摘要、语义检索、Agent 对话、兴趣度
 │   ├── data-provider/     # QQ 数据源适配器（Win / macOS ARM）
 │   ├── db-cli/            # 数据库命令行工具
-│   ├── orchestrator/      # Pipeline 调度编排
-│   ├── preprocessing/     # 数据预处理与清洗
+│   ├── orchestrator/      # 流水线调度编排
+│   ├── preprocessing/     # 数据预处理与会话划分
 │   ├── webui-backend/     # WebUI RESTful API 后端
 │   ├── webui-forwarder/   # 内网穿透转发服务
 │   └── webui-frontend/    # React SPA 前端
@@ -523,8 +575,9 @@ synthos/
 | 依赖注入 | TSyringe |
 | 任务调度 | Agenda + MongoDB |
 | 数据库 | SQLite (better-sqlite3) + LevelDB + sqlite-vec |
-| LLM 框架 | LangChain |
-| 向量模型 | bge-m3 (via Ollama) |
+| LLM 框架 | LangChain + LangGraph |
+| 向量模型 | bge-m3 (via Ollama, 1024d) |
+| Agent 框架 | LangGraph StateGraph (ReAct) |
 | 测试 | Vitest |
 | 容器化 | Docker Compose + Nginx |
 
@@ -621,7 +674,7 @@ pnpm install
 
 ## 🤝 贡献指南
 
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue 和 Pull Request。
 
 1. Fork 本仓库
 2. 创建特性分支：`git checkout -b feat/your-feature`
@@ -629,7 +682,7 @@ pnpm install
 4. 推送分支：`git push origin feat/your-feature`
 5. 创建 Pull Request
 
-> 提交信息请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范。
+提交信息请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范。
 
 ---
 
